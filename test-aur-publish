@@ -61,6 +61,9 @@ tag=v0.0.1-test
 
 # The clone, its vtium recipe pointed at the scratch source and key.
 git clone -q "$here" "$tmp/clone"
+# The aur-publish under test is the working copy's, so a change to it is
+# tested before it is committed.
+cp "$here/aur-publish" "$tmp/clone/aur-publish"
 cd "$tmp/clone"
 rm -f vtium/keys/pgp/*.asc
 GNUPGHOME=$keys gpg --batch --armor --export "$signer" >"vtium/keys/pgp/$signer.asc"
