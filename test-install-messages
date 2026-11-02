@@ -56,9 +56,11 @@ for script in "$here/vtium-git/vtium-git.install" "$here/vtium/vtium.install"; d
 		"      sudo rm /etc/systemd/system/autovt@tty1.service" \
 		"      sudo rm /etc/systemd/system/getty.target.wants/vtium@tty1.service" \
 		"      sudo systemctl preset getty@.service" \
-		"      sudo systemctl enable --now getty@tty1.service" \
+		"      sudo systemctl add-wants getty.target getty@tty1.service" \
+		"!      sudo systemctl enable --now getty@tty1.service" \
 		"      sudo systemctl daemon-reload" \
-		"    Where kmscon served a VT, enable kmsconvt@ttyN.service there in place of" \
+		"    Where kmscon served a VT, link it to kmscon in place of its getty:" \
+		"      sudo ln -s /usr/lib/systemd/system/kmsconvt@.service \\" \
 		"    Next time, run sudo vtium console disable --all before pacman -R vtium." \
 		"!    install vtium again, run sudo vtium console disable --all, then remove it."
 
@@ -71,7 +73,7 @@ for script in "$here/vtium-git/vtium-git.install" "$here/vtium/vtium.install"; d
 	link vtium@.service getty.target.wants/vtium@tty3.service
 	expect "$name: the records left behind are named, with the way to put them back" "$(run "$script" post_remove)" \
 		"      sudo rm /etc/systemd/system/autovt@tty3.service" \
-		"      sudo systemctl enable --now getty@tty3.service" \
+		"      sudo systemctl add-wants getty.target getty@tty3.service" \
 		"    Or put back exactly what vtium console recorded in /var/lib/vtium/console:" \
 		"    install vtium again, run sudo vtium console disable --all, then remove it."
 
@@ -81,7 +83,7 @@ for script in "$here/vtium-git/vtium-git.install" "$here/vtium/vtium.install"; d
 	link vtium@.service autovt@tty3.service
 	expect "$name: a template link to the getty is left unnamed" "$(run "$script" post_remove)" \
 		"      sudo rm /etc/systemd/system/autovt@tty3.service" \
-		"      sudo systemctl enable --now getty@tty3.service" \
+		"      sudo systemctl add-wants getty.target getty@tty3.service" \
 		"!      sudo rm /etc/systemd/system/autovt@.service" \
 		"!      sudo systemctl preset getty@.service"
 
@@ -99,6 +101,17 @@ for script in "$here/vtium-git/vtium-git.install" "$here/vtium/vtium.install"; d
 	printf '#!/bin/sh\nprintf "vtium@tty3.service loaded active running vtium on tty3\\n"\n' >"$tmp/bin/systemctl"
 	expect "$name: an upgrade names the running VTs" "$(run "$script" post_upgrade)" \
 		"    These still run the build they started with:" "      vtium@tty3.service"
+
+	# A removal while vtium runs names the running VTs, and says a VT has no
+	# console unit only while a link to vtium@.service is left.
+	expect "$name: a removal while vtium runs, with no link left, names the VT and no missing unit" "$(run "$script" pre_remove)" \
+		"      vtium@tty3.service" \
+		"    sudo systemctl stop vtium@ttyN.service stops one, which ends every" \
+		"!    A VT whose link still names vtium@.service then has no console unit;"
+	link vtium@.service autovt@tty3.service
+	expect "$name: a removal while vtium runs, with a link left, says that VT has no console unit" "$(run "$script" pre_remove)" \
+		"      vtium@tty3.service" \
+		"    A VT whose link still names vtium@.service then has no console unit;"
 done
 if cmp -s "$here/vtium-git/vtium-git.install" "$here/vtium/vtium.install"; then
 	echo "ok   both recipes carry the same install text"
