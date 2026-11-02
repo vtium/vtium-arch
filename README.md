@@ -31,10 +31,9 @@ The packages live beside the `kmscon` package and take none of its files: `kmsco
 
 ### What waits on vtium's main
 
-`vtium-git` builds whatever GitHub's `main` holds, so three things come with the vtium work that has not reached `main` yet:
+`vtium-git` builds whatever GitHub's `main` holds, so two things come with the vtium work that has not reached `main` yet:
 
 - `main` has no `crates/vtium/install/xterm-vtium.ti` until the work that names vtium `TERM=xterm-vtium` reaches it. Until then `package_vtium-terminfo-git()` stops with a message naming the missing file, so the whole `vtium-git` build fails and installs nothing.
-- `vtium console` comes with the work that adds it, which is in review and reaches `main` after it. Until then a vtium built from `main` has no `console` subcommand, and the steps under "Running vtium on a VT" wait for it.
 - The `Restart=on-failure` and `After=getty@%i.service` lines of vtium's unit, which this README's section on failures relies on, are in vtium's `integration` branch and reach `main` with it. Until then a `vtium@.service` built from `main` starts vtium only once, and its fallback starts the getty at the first failure.
 
 ## Building a package
