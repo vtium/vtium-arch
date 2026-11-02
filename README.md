@@ -32,7 +32,7 @@ The packages live beside the `kmscon` package and take none of its files: `kmsco
 
 ### What waits on vtium's main
 
-`vtium-git` builds whatever GitHub's `main` holds. The make targets `install-build`, `install` and `install-terminfo`, which both recipes call, and the shipped units `vtium@.service` and `vtium-getty@.service`, reach `main` with the vtium work that makes vtium's installs stand on their own. Until then make stops at the first target that `main`'s Makefile lacks, so a `vtium-git` build from `main` fails and installs nothing.
+`vtium-git` builds whatever GitHub's `main` holds. `main` has the make targets `install-build`, `install` and `install-terminfo` that both recipes call, so a `vtium-git` build from `main` succeeds. Until the vtium work that makes vtium's installs stand on their own reaches `main`, that build ships the example configuration as `/usr/share/doc/vtium/kmscon.conf.example`, and the vtium it builds reads `/etc/kmscon/kmscon.conf`. From then on, it ships `/etc/vtium/vtium.conf.example`, and vtium reads `/etc/vtium/vtium.conf`, as this README describes.
 
 ## Building a package
 
