@@ -1,0 +1,92 @@
+#!/bin/bash
+# Pushes one package directory of this repository to its AUR repository,
+# ssh://aur@aur.archlinux.org/<pkgname>.git, as the root of that repository's
+# master branch.
+#
+#   ./aur-publish [--dry-run] DIR
+#
+# The push goes out under the SSH key of whoever runs it, so the maintainer
+# runs it, after review. Before it pushes, it checks that:
+#   - DIR is a package directory: its name is the pkgbase in its .SRCINFO,
+#     and it holds PKGBUILD, .SRCINFO and LICENSE;
+#   - DIR has no change that is not committed, since only commits are pushed;
+#   - the committed .SRCINFO is what makepkg --printsrcinfo prints, run with
+#     VTIUM_GIT_URL and VTIUM_GIT_BRANCH unset;
+#   - no checksum is a placeholder;
+#   - each git source pinned to a tag names a tag its repository has, so a
+#     release package waits for its tag;
+#   - every commit the AUR receives holds PKGBUILD and .SRCINFO, which the
+#     AUR asks of each commit.
+# The commits are DIR's history, split out with git subtree split --prefix
+# DIR, so each push carries on from the last. --dry-run runs every check and
+# prints the push without running it.
+set -euo pipefail
+
+die() {
+	printf 'aur-publish: %s\n' "$*" >&2
+	exit 1
+}
+usage() {
+	sed -n '6,6s/^# \{0,1\}//p' "$0" >&2
+	exit 2
+}
+
+dry=
+dir=
+while [ $# -gt 0 ]; do
+	case $1 in
+	--dry-run) dry=1 ;;
+	-h | --help) usage ;;
+	-*) usage ;;
+	*) [ -z "$dir" ] || usage; dir=$1 ;;
+	esac
+	shift
+done
+[ -n "$dir" ] || usage
+
+top=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+cd "$top"
+dir=${dir%/}
+[[ $dir =~ ^[a-z0-9][a-z0-9._+-]*$ ]] || die "'$dir' is not a package directory at the top of $top"
+for f in PKGBUILD .SRCINFO LICENSE; do
+	[ -f "$dir/$f" ] || die "$dir has no $f"
+done
+pkgbase=$(sed -n 's/^pkgbase = //p' "$dir/.SRCINFO")
+[ "$pkgbase" = "$dir" ] || die "$dir/.SRCINFO names pkgbase '$pkgbase', not '$dir'"
+
+[ -z "$(git status --porcelain -- "$dir")" ] ||
+	die "$dir has changes that are not committed; commit them first, since only commits are pushed"
+
+srcinfo=$(cd "$dir" && env -u VTIUM_GIT_URL -u VTIUM_GIT_BRANCH makepkg --printsrcinfo) ||
+	die "makepkg --printsrcinfo failed in $dir"
+[ "$srcinfo" = "$(git show "HEAD:$dir/.SRCINFO")" ] ||
+	die "$dir/.SRCINFO is not what makepkg --printsrcinfo prints; run it again and commit: (cd $dir && makepkg --printsrcinfo > .SRCINFO)"
+
+# A placeholder checksum is one that is no checksum: words such as
+# PLACEHOLDER or FIXME, or a sum of zeros.
+if grep -E '^[[:space:]]*(md5|sha1|sha224|sha256|sha384|sha512|b2)sums = ' "$dir/.SRCINFO" |
+	grep -qiE '= (.*placeholder.*|.*fixme.*|.*todo.*|0+)$'; then
+	die "$dir/.SRCINFO holds a placeholder checksum; fill it in with updpkgsums once the source exists"
+fi
+
+# Each git source pinned to a tag must name a tag its repository has.
+while read -r url tag; do
+	git ls-remote --exit-code --tags "$url" "refs/tags/$tag" >/dev/null ||
+		die "$dir builds from tag $tag of $url, which has no such tag yet; publish $dir once the tag is pushed"
+done < <(sed -n 's/^[[:space:]]*source = \(.*::\)\{0,1\}git+\([^#?]*\)#tag=\([^?]*\).*/\2 \3/p' "$dir/.SRCINFO")
+
+split=$(git subtree split --prefix "$dir" HEAD 2>/dev/null) || die "git subtree split --prefix $dir failed"
+for c in $(git rev-list "$split"); do
+	for f in PKGBUILD .SRCINFO; do
+		git cat-file -e "$c:$f" 2>/dev/null ||
+			die "commit $(git rev-parse --short "$c") of $dir's history has no $f, and the AUR refuses such a commit"
+	done
+done
+
+remote=ssh://aur@aur.archlinux.org/$pkgbase.git
+echo "aur-publish: $dir passes every check; its history is $(git rev-list --count "$split") commits, ending at $(git rev-parse --short "$split")."
+if [ -n "$dry" ]; then
+	printf 'aur-publish: the push, not run:\n  git push %q %s:refs/heads/master\n' "$remote" "$split"
+	exit 0
+fi
+git push "$remote" "$split:refs/heads/master"
