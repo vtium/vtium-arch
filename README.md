@@ -102,7 +102,30 @@ sudo systemctl enable --now getty@tty3.service
 
 `systemctl disable` leaves the `autovt@tty3` link that `enable` made, so it goes by hand.
 
-`systemctl enable vtium@.service`, with no VT named, fails and links nothing. Without that refusal it would do harm: `systemctl` links each `Alias=` before it looks at `WantedBy=`, so on a machine with no `/etc/systemd/system/autovt@.service` yet it would link that name to `vtium@.service`, and logind would start vtium on every VT it spawns. The unit's `DefaultInstance=name-a-VT/vtium@ttyN` names no VT, so `systemctl` refuses it before it links anything; it ignores `DefaultInstance=` when you name a VT. The refusal shows elsewhere too: `systemctl list-unit-files` lists `vtium@.service` as `bad`, and `systemctl is-enabled vtium@.service` fails, while `systemctl is-enabled vtium@tty3.service` answers as usual.
+`systemctl enable vtium@.service`, with no VT named, fails and links nothing. Without that refusal it would do harm: `systemctl` links each `Alias=` before it looks at `WantedBy=`, so on a machine with no `/etc/systemd/system/autovt@.service` yet it would link that name to `vtium@.service`, and logind would start vtium on every VT it spawns, which a machine gets only on purpose, through the steps in "vtium on every VT" below. The unit's `DefaultInstance=name-a-VT/vtium@ttyN` names no VT, so `systemctl` refuses it before it links anything; it ignores `DefaultInstance=` when you name a VT. The refusal shows elsewhere too: `systemctl list-unit-files` lists `vtium@.service` as `bad`, and `systemctl is-enabled vtium@.service` fails, while `systemctl is-enabled vtium@tty3.service` answers as usual.
+
+### vtium on every VT
+
+On a machine that runs no kmscon console, on purpose, vtium can be the console of every VT that logind spawns, and of VT 1. This is a step you take by hand, because the package refuses to take every VT on its own. From a VT other than VT 1, or over ssh, with no one logged in on VT 1:
+
+```sh
+sudo ln -sf /usr/lib/systemd/system/vtium@.service /etc/systemd/system/autovt@.service
+sudo systemctl disable getty@tty1.service
+sudo systemctl enable vtium@tty1.service
+```
+
+The first command points logind's `autovt@.service` at vtium, in place of the getty's link that systemd's preset makes, so every VT that logind spawns when you switch to it runs vtium. The other two give VT 1, whose getty systemd starts at boot rather than through logind, to vtium from the next boot; `sudo systemctl start vtium@tty1.service` gives it now. Each VT you turned on one by one, as above, stays as it is.
+
+To go back to the getty everywhere:
+
+```sh
+sudo systemctl disable --now vtium@tty1.service
+sudo rm /etc/systemd/system/autovt@tty1.service /etc/systemd/system/autovt@.service
+sudo systemctl preset getty@.service
+sudo systemctl start getty@tty1.service
+```
+
+`systemctl preset getty@.service` links `autovt@.service` to the getty again and enables `getty@tty1` again, as a fresh install has them, because Arch's `/usr/lib/systemd/system-preset/90-systemd.preset` enables `getty@.service`. Each step here was measured with `systemctl --root` on a scratch root holding that preset (systemd 262).
 
 When vtium on a VT fails, its unit starts it again after 100 ms, up to five times in ten seconds, and each failure also starts `vtium-getty@tty3`, which starts a getty on the VT unless vtium's head file sets a closed policy, so a VT is never left at a dead screen. The restart needs the unit from vtium's `integration` branch (above).
 
@@ -126,7 +149,7 @@ Removing a package leaves the links that enabling a VT made, which then point at
 - that a release's tag exists on GitHub, and that it is signed by a key in `validpgpkeys`, checked against the key files in DIR's `keys/pgp/` alone, in a keyring of its own, with no configuration of the user's, so it never reaches the user's own keys or asks for a passphrase;
 - that every commit it pushes holds `PKGBUILD` and `.SRCINFO`, as the AUR asks.
 
-`--dry-run` runs the checks and prints the push without running it. `./test-aur-publish` runs each refusal against a scratch clone, a scratch source repository and scratch keys, and pushes nothing.
+`--dry-run` runs the checks and prints the push without running it. `./test-aur-publish` runs each refusal against a scratch clone, a scratch source repository and scratch keys, and pushes nothing. `./test-install-messages` checks what pacman prints after an install, an upgrade and a removal, against a scratch `/etc/systemd/system`.
 
 ```sh
 ./aur-publish --dry-run vtium-git

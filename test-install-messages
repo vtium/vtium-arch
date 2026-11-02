@@ -1,0 +1,89 @@
+#!/bin/bash
+# Tests the messages vtium-git.install and vtium.install print, against a
+# scratch /etc/systemd/system and a stand-in systemctl, and changes nothing
+# on this machine: each function runs with the script's /etc/systemd paths
+# rewritten to the scratch root's.
+#
+#   ./test-install-messages
+set -euo pipefail
+
+here=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+tmp=$(mktemp -d)
+trap 'rm -rf -- "$tmp"' EXIT
+fails=0
+
+# run SCRIPT FUNCTION: the function's output, with the scratch root's paths
+# printed as the machine's.
+run() {
+	sed "s|/etc/systemd|$tmp/root/etc/systemd|g" "$1" >"$tmp/inst"
+	PATH=$tmp/bin:$PATH bash -c ". '$tmp/inst'; $2" | sed "s|$tmp/root||g"
+}
+# expect CASE OUTPUT WANT...: each WANT is a line OUTPUT holds; a WANT that
+# starts with ! is a line it must not hold.
+expect() {
+	local case=$1 out=$2 w bad=
+	shift 2
+	for w in "$@"; do
+		if [[ $w == !* ]]; then
+			! grep -qxF -- "${w#!}" <<<"$out" || bad+=" holds ${w#!@Q}"
+		else
+			grep -qxF -- "$w" <<<"$out" || bad+=" lacks ${w@Q}"
+		fi
+	done
+	if [ -z "$bad" ]; then echo "ok   $case"; else echo "FAIL $case:$bad"; printf '       %s\n' "${out//$'\n'/$'\n'       }"; fails=$((fails + 1)); fi
+}
+reset() {
+	rm -rf "${tmp:?}/root" "${tmp:?}/bin"
+	mkdir -p "$tmp/root/etc/systemd/system/getty.target.wants" "$tmp/bin"
+	printf '#!/bin/sh\n' >"$tmp/bin/systemctl"
+	chmod +x "$tmp/bin/systemctl"
+}
+link() { ln -s "/usr/lib/systemd/system/$1" "$tmp/root/etc/systemd/system/$2"; }
+
+for script in "$here/vtium-git/vtium-git.install" "$here/vtium/vtium.install"; do
+	name=${script#"$here/"}
+	reset
+	expect "$name: nothing left, nothing said" "$(run "$script" post_remove)" "!==> vtium is removed, but these links to vtium@.service are left and point at"
+
+	# The README's "vtium on every VT" step, made by hand, and VT 1 given to
+	# vtium.
+	reset
+	link vtium@.service autovt@.service
+	link vtium@.service autovt@tty1.service
+	link vtium@.service getty.target.wants/vtium@tty1.service
+	expect "$name: the hand-made template link and VT 1 are named, with the README's way back" "$(run "$script" post_remove)" \
+		"      sudo rm /etc/systemd/system/autovt@.service" \
+		"      sudo rm /etc/systemd/system/autovt@tty1.service" \
+		"      sudo rm /etc/systemd/system/getty.target.wants/vtium@tty1.service" \
+		"      sudo systemctl preset getty@.service" \
+		"      sudo systemctl enable --now getty@tty1.service" \
+		"      sudo systemctl daemon-reload"
+
+	# The getty's own template link is not vtium's to name.
+	reset
+	link getty@.service autovt@.service
+	link vtium@.service autovt@tty3.service
+	expect "$name: a template link to the getty is left unnamed" "$(run "$script" post_remove)" \
+		"      sudo rm /etc/systemd/system/autovt@tty3.service" \
+		"      sudo systemctl enable --now getty@tty3.service" \
+		"!      sudo rm /etc/systemd/system/autovt@.service" \
+		"!      sudo systemctl preset getty@.service"
+
+	reset
+	expect "$name: install points at the every-VT steps" "$(run "$script" post_install)" \
+		"    every VT\" in the README: https://github.com/vtium/vtium-arch#vtium-on-every-vt"
+
+	# An upgrade names the VTs whose vtium still runs the old build.
+	reset
+	printf '#!/bin/sh\nprintf "vtium@tty3.service loaded active running vtium on tty3\\n"\n' >"$tmp/bin/systemctl"
+	expect "$name: an upgrade names the running VTs" "$(run "$script" post_upgrade)" \
+		"    These still run the build they started with:" "      vtium@tty3.service"
+done
+if cmp -s "$here/vtium-git/vtium-git.install" "$here/vtium/vtium.install"; then
+	echo "ok   both recipes carry the same install text"
+else
+	echo "FAIL the two install files differ"
+	fails=$((fails + 1))
+fi
+
+if [ "$fails" = 0 ]; then echo "test-install-messages: every case passed"; else echo "test-install-messages: $fails case(s) failed" >&2; exit 1; fi
