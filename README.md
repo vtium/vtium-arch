@@ -100,7 +100,7 @@ sudo rm /etc/systemd/system/autovt@tty3.service
 sudo systemctl enable --now getty@tty3.service
 ```
 
-`systemctl disable` leaves the `autovt@tty3` link that `enable` made, so it goes by hand.
+`systemctl disable` leaves the `autovt@tty3` link that `enable` made, so it goes by hand. Where kmscon served VT 3 before, give the VT back to kmscon instead of the getty: run `sudo systemctl enable --now kmsconvt@tty3.service` in place of the last command.
 
 `systemctl enable vtium@.service`, with no VT named, fails and links nothing. Without that refusal it would do harm: `systemctl` links each `Alias=` before it looks at `WantedBy=`, so on a machine with no `/etc/systemd/system/autovt@.service` yet it would link that name to `vtium@.service`, and logind would start vtium on every VT it spawns, which a machine gets only on purpose, through the steps in "vtium on every VT" below. The unit's `DefaultInstance=name-a-VT/vtium@ttyN` names no VT, so `systemctl` refuses it before it links anything; it ignores `DefaultInstance=` when you name a VT. The refusal shows elsewhere too: `systemctl list-unit-files` lists `vtium@.service` as `bad`, and `systemctl is-enabled vtium@.service` fails, while `systemctl is-enabled vtium@tty3.service` answers as usual.
 

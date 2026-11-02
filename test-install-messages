@@ -57,7 +57,8 @@ for script in "$here/vtium-git/vtium-git.install" "$here/vtium/vtium.install"; d
 		"      sudo rm /etc/systemd/system/getty.target.wants/vtium@tty1.service" \
 		"      sudo systemctl preset getty@.service" \
 		"      sudo systemctl enable --now getty@tty1.service" \
-		"      sudo systemctl daemon-reload"
+		"      sudo systemctl daemon-reload" \
+		"    Where kmscon served a VT, enable kmsconvt@ttyN.service there in place of"
 
 	# The getty's own template link is not vtium's to name.
 	reset
@@ -70,7 +71,8 @@ for script in "$here/vtium-git/vtium-git.install" "$here/vtium/vtium.install"; d
 		"!      sudo systemctl preset getty@.service"
 
 	reset
-	expect "$name: install points at the every-VT steps" "$(run "$script" post_install)" \
+	expect "$name: install points at the every-VT steps and kmscon's way back" "$(run "$script" post_install)" \
+		"      sudo systemctl enable --now kmsconvt@tty3.service" \
 		"    every VT\" in the README: https://github.com/vtium/vtium-arch#vtium-on-every-vt"
 
 	# An upgrade names the VTs whose vtium still runs the old build.
