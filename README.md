@@ -110,7 +110,16 @@ When vtium holds the template link, after `sudo vtium console enable --all`, giv
 sudo systemctl enable --now kmsconvt@tty3.service
 ```
 
-That links VT 3's own `autovt@tty3.service` to `kmsconvt@.service`, so logind starts kmscon there in place of vtium, and it adds kmscon to the consoles systemd starts at boot. `--now` starts kmscon on VT 3 at once, which ends every session there. kmscon's unit conflicts with the getty on the same VT, so where VT 3's getty is still enabled at boot, run `sudo systemctl disable getty@tty3.service` first. To give VT 3 back to vtium, log out there, then run `sudo systemctl disable --now kmsconvt@tty3.service` and `sudo rm /etc/systemd/system/autovt@tty3.service`; `disable` leaves that link, and once it is gone logind starts vtium on VT 3 through the template link.
+That gives kmscon VT 3 at boot as well as when you switch to it, and starts kmscon there now, which ends every session on VT 3. It links VT 3's own `autovt@tty3.service` to `kmsconvt@.service`, so logind starts kmscon there in place of vtium, and it adds kmscon to the consoles systemd starts at boot. kmscon's unit conflicts with the getty on the same VT, so where VT 3's getty is still enabled at boot, run `sudo systemctl disable getty@tty3.service` first.
+
+To give VT 3 back to vtium, log out there, then:
+
+```sh
+sudo systemctl disable --now kmsconvt@tty3.service
+sudo rm /etc/systemd/system/autovt@tty3.service
+```
+
+`systemctl disable` stops kmscon on VT 3 and takes it out of the consoles systemd starts at boot, but it leaves VT 3's own `autovt@tty3.service` link, so that link goes by hand. Once it is gone, logind starts vtium on VT 3 through the template link the next time you switch there.
 
 While vtium holds the template link, don't run kmscon's own `systemctl enable kmsconvt@`. It fails, because `autovt@.service` already links to `vtium@.service`, and it still enables kmscon at boot on VT 1, through the `DefaultInstance=tty1` of kmscon's unit. `sudo systemctl disable kmsconvt@tty1.service` undoes that.
 
