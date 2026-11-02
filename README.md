@@ -104,22 +104,28 @@ When you switch to a VT where no console runs, logind starts `autovt@ttyN.servic
 
 When kmscon holds the template link, as it does after kmscon's own `systemctl enable kmsconvt@`, `sudo vtium console enable 3` gives vtium VT 3. It links VT 3's own `autovt@tty3.service` to vtium, and kmscon keeps every other VT.
 
-When vtium holds the template link, after `sudo vtium console enable --all`, give kmscon VT 3 with:
+When vtium holds the template link, after `sudo vtium console enable --all`, give kmscon VT 3 with a link of VT 3's own:
 
 ```sh
-sudo systemctl enable --now kmsconvt@tty3.service
+sudo systemctl disable getty@tty3.service    # only where VT 3's getty is enabled at boot
+sudo ln -s /usr/lib/systemd/system/kmsconvt@.service /etc/systemd/system/autovt@tty3.service
+sudo systemctl daemon-reload
 ```
 
-That gives kmscon VT 3 at boot as well as when you switch to it, and starts kmscon there now, which ends every session on VT 3. It links VT 3's own `autovt@tty3.service` to `kmsconvt@.service`, so logind starts kmscon there in place of vtium, and it adds kmscon to the consoles systemd starts at boot. kmscon's unit conflicts with the getty on the same VT, so where VT 3's getty is still enabled at boot, run `sudo systemctl disable getty@tty3.service` first.
+The link makes `autovt@tty3.service` name kmscon, so logind starts kmscon on VT 3 when you switch there, and every other VT keeps vtium through the template link. `daemon-reload` makes systemd read the new link. Nothing starts kmscon at boot, and nothing starts it now: logind starts it the next time you switch to VT 3 while no console runs there. A getty or a vtium that still runs on VT 3 keeps it until it stops, and `sudo systemctl stop getty@tty3.service` or `sudo systemctl stop vtium@tty3.service` stops it, which ends every session there. The first command frees VT 3 from a getty that systemd starts there at boot; `vtium console enable --all` has already disabled those on VTs 2 to 6.
 
-To give VT 3 back to vtium, log out there, then:
+To give VT 3 back, log out there, then:
 
 ```sh
-sudo systemctl disable --now kmsconvt@tty3.service
+sudo systemctl stop kmsconvt@tty3.service    # ends every session on VT 3
 sudo rm /etc/systemd/system/autovt@tty3.service
+sudo systemctl daemon-reload
+sudo systemctl add-wants getty.target getty@tty3.service    # only if you disabled VT 3's getty above
 ```
 
-`systemctl disable` stops kmscon on VT 3 and takes it out of the consoles systemd starts at boot, but it leaves VT 3's own `autovt@tty3.service` link, so that link goes by hand. Once it is gone, logind starts vtium on VT 3 through the template link the next time you switch there.
+With kmscon stopped and the link gone, logind starts vtium on VT 3 through the template link the next time you switch there. The last command enables VT 3's getty at boot again. It uses `add-wants` rather than `systemctl enable getty@tty3.service`, because `enable` also links `autovt@tty3.service` to the getty, and `vtium console enable 3` refuses a VT whose own link names another console.
+
+`sudo systemctl enable --now kmsconvt@tty3.service` also gives kmscon VT 3, through the same link, and it also adds kmscon to the consoles systemd starts at boot and starts it now. This guide avoids it because two consoles that open the display card at boot compete for it, which is why `vtium console enable --all` starts vtium at boot on VT 1 alone.
 
 While vtium holds the template link, don't run kmscon's own `systemctl enable kmsconvt@`. It fails, because `autovt@.service` already links to `vtium@.service`, and it still enables kmscon at boot on VT 1, through the `DefaultInstance=tty1` of kmscon's unit. `sudo systemctl disable kmsconvt@tty1.service` undoes that.
 
