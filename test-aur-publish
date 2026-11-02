@@ -38,7 +38,7 @@ expect() {
 		return
 	fi
 	echo "FAIL $case: wanted ${want@Q}, got exit $code:"
-	sed 's/^/       /' <<<"$out"
+	printf '       %s\n' "${out//$'\n'/$'\n'       }"
 	fails=$((fails + 1))
 }
 
