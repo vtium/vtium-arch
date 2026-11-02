@@ -25,7 +25,7 @@ Each recipe builds two packages: the console, and vtium's terminfo entry, which 
 | `/usr/share/terminfo/x/xterm-vtium` | `vtium-terminfo`, `vtium-terminfo-git` | vtium's terminfo entry, which sessions in vtium name in `TERM` |
 | `/usr/share/licenses/<package>/LICENSE` | each | the license |
 
-vtium starts its helper at a path fixed when it is built, so each recipe builds the console to start `/usr/bin/vtium-vitrify`. The two units are vtium's shipped `kmsconvt@` units under vtium's own names, made in `package()` the way vtium's `tools/vt/units.sh` makes them: the name and the fallback's name change, `Conflicts=` and `After=` lines naming `kmsconvt@%i.service` make starting vtium on a VT stop the kmscon console there first, and `DefaultInstance=` goes, so `systemctl enable vtium@.service` with no VT named links nothing. `Alias=autovt@.service` stays. vtium reads its configuration from `/etc/kmscon/kmscon.conf`, its head file from `/etc/vtium/heads.conf` and its frits from `/etc/vtium/fonts`; the packages install none of them, so a vtium with no configuration runs with its defaults.
+vtium starts its helper at a path fixed when it is built, so each recipe builds the console to start `/usr/bin/vtium-vitrify`. The two units are vtium's shipped `kmsconvt@` units under vtium's own names, made in `package()` the way vtium's `tools/vt/units.sh` makes them: the name and the fallback's name change, `Conflicts=` and `After=` lines naming `kmsconvt@%i.service` make starting vtium on a VT stop the kmscon console there first, and `DefaultInstance=tty1` gives way to `DefaultInstance=name-a-VT/vtium@ttyN`, which names no VT (below). `Alias=autovt@.service` stays. vtium reads its configuration from `/etc/kmscon/kmscon.conf`, its head file from `/etc/vtium/heads.conf` and its frits from `/etc/vtium/fonts`; the packages install none of them, so a vtium with no configuration runs with its defaults.
 
 The packages live beside the `kmscon` package and take none of its files: `kmscon` keeps `/usr/bin/kmscon`, `kmsconvt@.service`, `kmscon.service`, `/etc/kmscon/kmscon.conf.example` and the link `/etc/systemd/system/autovt@.service`, and `kmscon-terminfo` keeps the terminfo entry named `kmscon`. vtium names itself `TERM=xterm-vtium`, so its sessions read its own entry, and the kmscon console's sessions keep the one they were built for. A vtium run with `term=kmscon` needs `kmscon-terminfo`, which is an optional dependency.
 
@@ -82,7 +82,7 @@ makepkg builds the branch's last commit, so commit the changes first. It keeps i
 
 ## Running vtium on a VT
 
-Installing a package starts nothing. vtium runs on a VT only where you turn it on, one VT at a time, on a VT where no one is logged in. For VT 3, from another VT or over ssh:
+Installing a package starts nothing. vtium runs on a VT only where you turn it on, one VT at a time, on a VT where no one is logged in, and you always name the VT: `vtium@tty3.service`, never `vtium@.service` alone. For VT 3, from another VT or over ssh:
 
 ```sh
 sudo systemctl disable getty@tty3.service
@@ -101,6 +101,8 @@ sudo systemctl enable --now getty@tty3.service
 ```
 
 `systemctl disable` leaves the `autovt@tty3` link that `enable` made, so it goes by hand.
+
+`systemctl enable vtium@.service`, with no VT named, fails and links nothing. Without that refusal it would do harm: `systemctl` links each `Alias=` before it looks at `WantedBy=`, so on a machine with no `/etc/systemd/system/autovt@.service` yet it would link that name to `vtium@.service`, and logind would start vtium on every VT it spawns. The unit's `DefaultInstance=name-a-VT/vtium@ttyN` names no VT, so `systemctl` refuses it before it links anything; it ignores `DefaultInstance=` when you name a VT. The refusal shows elsewhere too: `systemctl list-unit-files` lists `vtium@.service` as `bad`, and `systemctl is-enabled vtium@.service` fails, while `systemctl is-enabled vtium@tty3.service` answers as usual.
 
 When vtium on a VT fails, its unit starts it again after 100 ms, up to five times in ten seconds, and each failure also starts `vtium-getty@tty3`, which starts a getty on the VT unless vtium's head file sets a closed policy, so a VT is never left at a dead screen. The restart needs the unit from vtium's `integration` branch (above).
 
