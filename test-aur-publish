@@ -61,10 +61,12 @@ tag=v0.0.1-test
 
 # The clone, its vtium recipe pointed at the scratch source and key.
 git clone -q "$here" "$tmp/clone"
-# The aur-publish under test is the working copy's, so a change to it is
-# tested before it is committed.
-cp "$here/aur-publish" "$tmp/clone/aur-publish"
 cd "$tmp/clone"
+# The aur-publish under test is the working copy's, so a change to it is
+# tested before it is committed. The clone commits it, so the cases below
+# that reset the clone keep it.
+cp "$here/aur-publish" aur-publish
+git commit -q --allow-empty -am "the aur-publish under test"
 rm -f vtium/keys/pgp/*.asc
 GNUPGHOME=$keys gpg --batch --armor --export "$signer" >"vtium/keys/pgp/$signer.asc"
 sed -i -e "s|^_tag=.*|_tag=$tag|" \
@@ -91,6 +93,15 @@ git -C "$tmp/src" tag -d "$tag" >/dev/null
 
 GNUPGHOME=$keys git -C "$tmp/src" -c gpg.program=gpg tag -s -u "$signer" -m "signed by the recipe's key" "$tag"
 expect pass "a tag signed by the recipe's key passes" vtium
+
+# A key file that holds another key besides the one named: a tag that other
+# key signed verifies, but its signer is not in validpgpkeys.
+GNUPGHOME=$keys gpg --batch --armor --export "$signer" "$other" >"vtium/keys/pgp/$signer.asc"
+git commit -q -am "a key file with a second key in it"
+git -C "$tmp/src" tag -d "$tag" >/dev/null
+GNUPGHOME=$keys git -C "$tmp/src" -c gpg.program=gpg tag -s -u "$other" -m "signed by the second key" "$tag"
+expect "which is not in vtium's validpgpkeys" "a signer outside validpgpkeys is refused" vtium
+git reset -q --hard HEAD~1
 
 # The key the recipe names must be in keys/pgp.
 git rm -q "vtium/keys/pgp/$signer.asc"
