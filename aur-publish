@@ -14,7 +14,11 @@
 #     VTIUM_GIT_URL and VTIUM_GIT_BRANCH unset;
 #   - no checksum is a placeholder;
 #   - each git source pinned to a tag names a tag its repository has, so a
-#     release package waits for its tag;
+#     release package waits for its tag, and a source with ?signed names a
+#     tag signed by one of validpgpkeys' keys, checked against the key files
+#     in DIR/keys/pgp alone, in a keyring of its own;
+#   - the steps vtium-git/PKGBUILD and vtium/PKGBUILD share, everything from
+#     the line "# Everything below is the same", are the same in both;
 #   - every commit the AUR receives holds PKGBUILD and .SRCINFO, which the
 #     AUR asks of each commit.
 # The commits are DIR's history, split out with git subtree split --prefix
@@ -69,11 +73,52 @@ if grep -E '^[[:space:]]*(md5|sha1|sha224|sha256|sha384|sha512|b2)sums = ' "$dir
 	die "$dir/.SRCINFO holds a placeholder checksum; fill it in with updpkgsums once the source exists"
 fi
 
-# Each git source pinned to a tag must name a tag its repository has.
-while read -r url tag; do
-	git ls-remote --exit-code --tags "$url" "refs/tags/$tag" >/dev/null ||
+# The steps both recipes share must not drift apart.
+shared() { sed -n '/^# Everything below is the same/,$p' "$1"; }
+for other in vtium-git vtium; do
+	[ "$other" != "$dir" ] && [ -f "$other/PKGBUILD" ] || continue
+	[ -n "$(shared "$dir/PKGBUILD")" ] || die "$dir/PKGBUILD has no line '# Everything below is the same' before the steps it shares with $other"
+	[ "$(shared "$dir/PKGBUILD")" = "$(shared "$other/PKGBUILD")" ] ||
+		die "the steps $dir/PKGBUILD shares with $other/PKGBUILD differ; make them the same in both"
+done
+
+# A scratch directory for the tag checks: a bare repository to fetch each
+# tag into and a keyring that holds only DIR's key files. git and gpg read
+# no configuration of the user's and start no agent, so they never reach the
+# user's own keys or ask for a passphrase.
+scratch=$(mktemp -d) || die "cannot create a scratch directory"
+cleanup() {
+	gpgconf --homedir "$scratch/gnupg" --kill all >/dev/null 2>&1 || true
+	rm -rf -- "$scratch"
+}
+trap cleanup EXIT
+tagcheck() {
+	GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GNUPGHOME=$scratch/gnupg git -C "$scratch/repo" "$@"
+}
+mkdir -m 0700 "$scratch/gnupg"
+printf 'no-autostart\n' >"$scratch/gnupg/gpg.conf"
+GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git init -q --bare "$scratch/repo"
+mapfile -t keys < <(sed -n 's/^[[:space:]]*validpgpkeys = //p' "$dir/.SRCINFO")
+for k in "${keys[@]}"; do
+	[ -f "$dir/keys/pgp/$k.asc" ] || die "$dir names the key $k in validpgpkeys but holds no $dir/keys/pgp/$k.asc"
+	GNUPGHOME=$scratch/gnupg gpg --batch --quiet --import "$dir/keys/pgp/$k.asc" 2>/dev/null ||
+		die "$dir/keys/pgp/$k.asc is not a key gpg can import"
+done
+# Each git source pinned to a tag must name a tag its repository has, and
+# one with ?signed a tag that a key of validpgpkeys signed.
+while read -r url tag query; do
+	tagcheck fetch -q --no-tags "$url" "refs/tags/$tag:refs/tags/$tag" 2>/dev/null ||
 		die "$dir builds from tag $tag of $url, which has no such tag yet; publish $dir once the tag is pushed"
-done < <(sed -n 's/^[[:space:]]*source = \(.*::\)\{0,1\}git+\([^#?]*\)#tag=\([^?]*\).*/\2 \3/p' "$dir/.SRCINFO")
+	[[ $query == *signed* ]] || continue
+	[ ${#keys[@]} -gt 0 ] || die "$dir checks the signature of tag $tag but names no key in validpgpkeys"
+	[ "$(tagcheck cat-file -t "refs/tags/$tag")" = tag ] ||
+		die "tag $tag of $url is a lightweight tag, which carries no signature"
+	signer=$(tagcheck verify-tag --raw "$tag" 2>&1 | awk '$2 == "VALIDSIG" { print $NF }') || true
+	[ -n "$signer" ] || die "tag $tag of $url carries no good signature by a key in $dir/keys/pgp"
+	printf '%s\n' "${keys[@]}" | grep -qxF "$signer" ||
+		die "tag $tag of $url is signed by $signer, which is not in $dir's validpgpkeys"
+	echo "aur-publish: tag $tag of $url is signed by $signer."
+done < <(sed -n 's/^[[:space:]]*source = \(.*::\)\{0,1\}git+\([^#?]*\)#tag=\([^?]*\)\(.*\)/\2 \3 \4/p' "$dir/.SRCINFO")
 
 split=$(git subtree split --prefix "$dir" HEAD 2>/dev/null) || die "git subtree split --prefix $dir failed"
 for c in $(git rev-list "$split"); do
