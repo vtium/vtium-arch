@@ -1,8 +1,8 @@
 #!/bin/bash
 # Tests the messages vtium-git.install and vtium.install print, against a
-# scratch /etc/systemd/system and a stand-in systemctl, and changes nothing
-# on this machine: each function runs with the script's /etc/systemd paths
-# rewritten to the scratch root's.
+# scratch /etc/systemd/system and /var/lib/vtium and a stand-in systemctl,
+# and changes nothing on this machine: each function runs with the script's
+# /etc/systemd and /var/lib/vtium paths rewritten to the scratch root's.
 #
 #   ./test-install-messages
 set -euo pipefail
@@ -15,7 +15,7 @@ fails=0
 # run SCRIPT FUNCTION: the function's output, with the scratch root's paths
 # printed as the machine's.
 run() {
-	sed "s|/etc/systemd|$tmp/root/etc/systemd|g" "$1" >"$tmp/inst"
+	sed -e "s|/etc/systemd|$tmp/root/etc/systemd|g" -e "s|/var/lib/vtium|$tmp/root/var/lib/vtium|g" "$1" >"$tmp/inst"
 	PATH=$tmp/bin:$PATH bash -c ". '$tmp/inst'; $2" | sed "s|$tmp/root||g"
 }
 # expect CASE OUTPUT WANT...: each WANT is a line OUTPUT holds; a WANT that
@@ -45,20 +45,35 @@ for script in "$here/vtium-git/vtium-git.install" "$here/vtium/vtium.install"; d
 	reset
 	expect "$name: nothing left, nothing said" "$(run "$script" post_remove)" "!==> vtium is removed, but these links to vtium@.service are left and point at"
 
-	# The README's "vtium on every VT" step, made by hand, and VT 1 given to
-	# vtium.
+	# The template link and VT 1 given to vtium, by vtium console enable --all
+	# or by hand, with no records.
 	reset
 	link vtium@.service autovt@.service
 	link vtium@.service autovt@tty1.service
 	link vtium@.service getty.target.wants/vtium@tty1.service
-	expect "$name: the hand-made template link and VT 1 are named, with the README's way back" "$(run "$script" post_remove)" \
+	expect "$name: the template link and VT 1 are named, with the way back" "$(run "$script" post_remove)" \
 		"      sudo rm /etc/systemd/system/autovt@.service" \
 		"      sudo rm /etc/systemd/system/autovt@tty1.service" \
 		"      sudo rm /etc/systemd/system/getty.target.wants/vtium@tty1.service" \
 		"      sudo systemctl preset getty@.service" \
 		"      sudo systemctl enable --now getty@tty1.service" \
 		"      sudo systemctl daemon-reload" \
-		"    Where kmscon served a VT, enable kmsconvt@ttyN.service there in place of"
+		"    Where kmscon served a VT, enable kmsconvt@ttyN.service there in place of" \
+		"    Next time, run sudo vtium console disable --all before pacman -R vtium." \
+		"!    install vtium again, run sudo vtium console disable --all, then remove it."
+
+	# vtium console's records outlive the package, and the message names the
+	# way to put back exactly what they hold.
+	reset
+	mkdir -p "$tmp/root/var/lib/vtium/console"
+	printf '/usr/lib/systemd/system/getty@.service\n' >"$tmp/root/var/lib/vtium/console/tty3"
+	link vtium@.service autovt@tty3.service
+	link vtium@.service getty.target.wants/vtium@tty3.service
+	expect "$name: the records left behind are named, with the way to put them back" "$(run "$script" post_remove)" \
+		"      sudo rm /etc/systemd/system/autovt@tty3.service" \
+		"      sudo systemctl enable --now getty@tty3.service" \
+		"    Or put back exactly what vtium console recorded in /var/lib/vtium/console:" \
+		"    install vtium again, run sudo vtium console disable --all, then remove it."
 
 	# The getty's own template link is not vtium's to name.
 	reset
@@ -71,9 +86,13 @@ for script in "$here/vtium-git/vtium-git.install" "$here/vtium/vtium.install"; d
 		"!      sudo systemctl preset getty@.service"
 
 	reset
-	expect "$name: install points at the every-VT steps and kmscon's way back" "$(run "$script" post_install)" \
-		"      sudo systemctl enable --now kmsconvt@tty3.service" \
-		"    every VT\" in the README: https://github.com/vtium/vtium-arch#vtium-on-every-vt"
+	expect "$name: install says nothing is on, and points at vtium console and kmscon's sharing" "$(run "$script" post_install)" \
+		"==> vtium runs on no VT until you turn it on, the same as the kmscon package." \
+		"      sudo vtium console enable 3" \
+		"      sudo vtium console enable --all" \
+		"      sudo vtium console disable --all" \
+		"      https://github.com/vtium/vtium-arch#sharing-vts-with-kmscon" \
+		"!      sudo systemctl enable vtium@tty3.service"
 
 	# An upgrade names the VTs whose vtium still runs the old build.
 	reset
