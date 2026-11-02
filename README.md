@@ -21,20 +21,18 @@ Each recipe builds two packages: the console, and vtium's terminfo entry, which 
 | `/usr/bin/vtium-vitrify` | `vtium`, `vtium-git` | the glyph helper, which vtium starts to draw the glyphs of a frit (a font set file) |
 | `/usr/lib/systemd/system/vtium@.service` | `vtium`, `vtium-git` | the unit that runs vtium on one VT in place of its getty |
 | `/usr/lib/systemd/system/vtium-getty@.service` | `vtium`, `vtium-git` | the fallback that starts a getty on the VT when vtium fails |
-| `/usr/share/doc/vtium/` | `vtium`, `vtium-git` | the example configuration and the example udev rules and hwdb fragment, as documentation |
+| `/etc/vtium/vtium.conf.example` | `vtium`, `vtium-git` | the example configuration, beside `/etc/vtium/vtium.conf`, the file vtium reads |
+| `/usr/share/doc/vtium/examples/` | `vtium`, `vtium-git` | the example udev rules and hwdb fragment, as documentation |
 | `/usr/share/terminfo/x/xterm-vtium` | `vtium-terminfo`, `vtium-terminfo-git` | vtium's terminfo entry, which sessions in vtium name in `TERM` |
 | `/usr/share/licenses/<package>/LICENSE` | each | the license |
 
-vtium starts its helper at a path fixed when it is built, so each recipe builds the console to start `/usr/bin/vtium-vitrify`. The two units are vtium's shipped `kmsconvt@` units under vtium's own names, made in `package()` the way vtium's `tools/vt/units.sh` makes them: the name and the fallback's name change, `Conflicts=` and `After=` lines naming `kmsconvt@%i.service` make starting vtium on a VT stop the kmscon console there first, and `DefaultInstance=tty1` gives way to `DefaultInstance=name-a-VT/vtium@ttyN`, which names no VT (below). `Alias=autovt@.service` stays. vtium reads its configuration from `/etc/kmscon/kmscon.conf`, its head file from `/etc/vtium/heads.conf` and its frits from `/etc/vtium/fonts`; the packages install none of them, so a vtium with no configuration runs with its defaults.
+Each recipe builds and stages these files with vtium's own make targets, so the knowledge of which file goes where lives in vtium's tree: `make install DESTDIR="$pkgdir" PREFIX=/usr` stages the console's package, and `make install-terminfo DESTDIR="$pkgdir" PREFIX=/usr` stages the terminfo package. vtium starts its helper at a path fixed when it is built, and `PREFIX=/usr` builds the console to start `/usr/bin/vtium-vitrify`. vtium's `tools/vt/units.sh` makes the two units from vtium's shipped `vtium@.service` and `vtium-getty@.service`: `Conflicts=` and `After=` lines naming `kmsconvt@%i.service` make starting vtium on a VT stop the kmscon console there first, and `DefaultInstance=tty1` gives way to `DefaultInstance=name-a-VT/vtium@ttyN`, which names no VT (below). `Alias=autovt@.service` stays. vtium reads its configuration from `/etc/vtium/vtium.conf`, its head file from `/etc/vtium/heads.conf` and its frits from `/etc/vtium/fonts`. The packages install none of them, so a vtium with no configuration runs with its defaults. To start a configuration of your own, copy the example beside it, with `sudo cp /etc/vtium/vtium.conf.example /etc/vtium/vtium.conf`. vtium reads nothing under `/etc/kmscon`, so a kmscon configuration never reaches vtium.
 
 The packages live beside the `kmscon` package and take none of its files: `kmscon` keeps `/usr/bin/kmscon`, `kmsconvt@.service`, `kmscon.service`, `/etc/kmscon/kmscon.conf.example` and the link `/etc/systemd/system/autovt@.service`, and `kmscon-terminfo` keeps the terminfo entry named `kmscon`. vtium names itself `TERM=xterm-vtium`, so its sessions read its own entry, and the kmscon console's sessions keep the one they were built for. A vtium run with `term=kmscon` needs `kmscon-terminfo`, which is an optional dependency.
 
 ### What waits on vtium's main
 
-`vtium-git` builds whatever GitHub's `main` holds, so two things come with the vtium work that has not reached `main` yet:
-
-- `main` has no `crates/vtium/install/xterm-vtium.ti` until the work that names vtium `TERM=xterm-vtium` reaches it. Until then `package_vtium-terminfo-git()` stops with a message naming the missing file, so the whole `vtium-git` build fails and installs nothing.
-- The `Restart=on-failure` and `After=getty@%i.service` lines of vtium's unit, which this README's section on failures relies on, are in vtium's `integration` branch and reach `main` with it. Until then a `vtium@.service` built from `main` starts vtium only once, and its fallback starts the getty at the first failure.
+`vtium-git` builds whatever GitHub's `main` holds. `main` has the make targets `install-build`, `install` and `install-terminfo` that both recipes call, so a `vtium-git` build from `main` succeeds. Until the vtium work that makes vtium's installs stand on their own reaches `main`, that build ships the example configuration as `/usr/share/doc/vtium/kmscon.conf.example`, and the vtium it builds reads `/etc/kmscon/kmscon.conf`. From then on, it ships `/etc/vtium/vtium.conf.example`, and vtium reads `/etc/vtium/vtium.conf`, as this README describes.
 
 ## Building a package
 
@@ -45,7 +43,7 @@ cd vtium-git
 makepkg -si
 ```
 
-makepkg clones vtium from GitHub, fetches its crates with `cargo fetch --locked`, and builds offline from there, with the host's own toolchain. It needs `cargo`, `git`, `ncurses` (for `tic`), `libxkbcommon` and `systemd-libs`, and the `base-devel` group that every makepkg build needs. `VTIUM_FEATURES` in makepkg's environment builds the console with other features, such as `VTIUM_FEATURES='images logind' makepkg -si`; unset, it builds the minspec console.
+makepkg clones vtium from GitHub and fetches its crates with `cargo fetch --locked`. From there it builds offline, with the host's own toolchain, through vtium's Makefile: `build()` runs `make install-build`, and each package's `package()` runs `make install` or `make install-terminfo`, which find that build and build nothing again. It needs `cargo`, `git`, `ncurses` (for `tic`), `libxkbcommon` and `systemd-libs`, and the `base-devel` group that every makepkg build needs, which holds `make`. `VTIUM_FEATURES` in makepkg's environment builds the console with other features, such as `VTIUM_FEATURES='images logind' makepkg -si`; the recipe hands it to make as `FEATURES`. Unset, it builds the minspec console.
 
 A build in a clean chroot checks that the dependencies are complete, since it starts from a system that holds only `base-devel` and what the recipe names. It needs root, so the maintainer runs it, from the recipe's directory, with `devtools` installed:
 
