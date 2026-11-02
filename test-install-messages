@@ -59,7 +59,9 @@ for script in "$here/vtium-git/vtium-git.install" "$here/vtium/vtium.install"; d
 		"      sudo systemctl add-wants getty.target getty@tty1.service" \
 		"!      sudo systemctl enable --now getty@tty1.service" \
 		"      sudo systemctl daemon-reload" \
-		"    Where kmscon served a VT, link it to kmscon in place of its getty:" \
+		"    VT's add-wants line and link the VT to kmscon instead, as shown below:" \
+		"    The kmscon link, for a VT that kmscon served:" \
+		"    VT, with sudo systemctl start getty@ttyN.service. Started while vtium" \
 		"      sudo ln -s /usr/lib/systemd/system/kmsconvt@.service \\" \
 		"    Next time, run sudo vtium console disable --all before pacman -R vtium." \
 		"!    install vtium again, run sudo vtium console disable --all, then remove it."
