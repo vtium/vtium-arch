@@ -1,7 +1,1 @@
-# What makepkg leaves in vtium-git/: the git mirror, the build and package
-# trees, the packages and their logs.
-vtium-git/vtium/
-vtium-git/src/
-vtium-git/pkg/
-vtium-git/*.pkg.tar*
-vtium-git/*.log
+# Each package directory ignores its own build output (*/.gitignore).
