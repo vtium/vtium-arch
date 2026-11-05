@@ -129,6 +129,11 @@ echo "# a change in one copy alone" >>vtium/terminus.vtfrit
 git commit -q -am "a frit that differs from its twin's"
 expect "vtium-git/terminus.vtfrit and vtium/terminus.vtfrit differ" "a file that differs from its twin's copy is refused" vtium-git
 git reset -q --hard HEAD~1
+git rm -q vtium-git/terminus.vtfrit
+git commit -q -m "a frit only one twin holds"
+expect "vtium holds terminus.vtfrit and vtium-git does not" "a file only the twin holds is refused" vtium-git
+expect "vtium holds terminus.vtfrit and vtium-git does not" "a file only this recipe holds is refused" vtium
+git reset -q --hard HEAD~1
 
 # What is pushed is what is committed, and .SRCINFO follows the PKGBUILD.
 echo "# uncommitted" >>vtium-git/PKGBUILD

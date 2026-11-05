@@ -19,8 +19,9 @@
 #     in DIR/keys/pgp alone, in a keyring of its own;
 #   - the steps a release recipe and its -git twin share, such as
 #     vtium/PKGBUILD and vtium-git/PKGBUILD, everything from the line
-#     "# Everything below is the same", are the same in both, and so is
-#     every other file both carry, such as LICENSE and a frit;
+#     "# Everything below is the same", are the same in both, and every
+#     other committed file, such as LICENSE and a frit, is in both and the
+#     same in both;
 #   - every commit the AUR receives holds PKGBUILD and .SRCINFO, which the
 #     AUR asks of each commit.
 # The commits are DIR's history, split out with git subtree split --prefix
@@ -87,13 +88,15 @@ if [ -f "$other/PKGBUILD" ]; then
 	[ -n "$(shared "$dir/PKGBUILD")" ] || die "$dir/PKGBUILD has no line '# Everything below is the same' before the steps it shares with $other"
 	[ "$(shared "$dir/PKGBUILD")" = "$(shared "$other/PKGBUILD")" ] ||
 		die "the steps $dir/PKGBUILD shares with $other/PKGBUILD differ; make them the same in both"
-	# Every other file both twins carry, such as LICENSE and a frit, is the
-	# same in both.
-	for f in "$dir"/* "$dir"/.gitignore; do
-		b=${f##*/}
-		case $b in PKGBUILD | .SRCINFO) continue ;; esac
-		[ -f "$f" ] && [ -f "$other/$b" ] || continue
-		cmp -s "$f" "$other/$b" || die "$dir/$b and $other/$b differ; make them the same in both"
+	# Every other committed file, such as LICENSE and a frit, is in both
+	# twins and the same in both, apart from each one's install script, named
+	# for its package, and the release recipe's keys/.
+	twinfiles() { git ls-tree --name-only HEAD -- "$1/" | sed "s|^$1/||" | grep -vxE 'PKGBUILD|\.SRCINFO|keys|.*\.install' || true; }
+	for b in $(twinfiles "$dir") $(twinfiles "$other"); do
+		git cat-file -e "HEAD:$dir/$b" 2>/dev/null || die "$other holds $b and $dir does not; give both the same copy"
+		git cat-file -e "HEAD:$other/$b" 2>/dev/null || die "$dir holds $b and $other does not; give both the same copy"
+		[ "$(git rev-parse "HEAD:$dir/$b")" = "$(git rev-parse "HEAD:$other/$b")" ] ||
+			die "$dir/$b and $other/$b differ; make them the same in both"
 	done
 fi
 
