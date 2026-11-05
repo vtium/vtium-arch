@@ -45,7 +45,7 @@ scripts=("$here"/*/*.install)
 for script in "${scripts[@]}"; do
 	name=${script#"$here/"}
 	reset
-	expect "$name: nothing left, nothing said" "$(run "$script" post_remove)" "!==> vtium is removed, but these links to vtium@.service are left and point at"
+	expect "$name: nothing left, nothing said" "$(run "$script" post_remove)" "!==> If pacman removed this package to install another vtium console package,"
 
 	# The template link and VT 1 given to vtium, by vtium console enable --all
 	# or by hand, with no records.
@@ -61,11 +61,15 @@ for script in "${scripts[@]}"; do
 		"      sudo systemctl add-wants getty.target getty@tty1.service" \
 		"!      sudo systemctl enable --now getty@tty1.service" \
 		"      sudo systemctl daemon-reload" \
-		"    VT's add-wants line and link the VT to kmscon instead, as shown below:" \
+		"    served a VT, skip that VT's add-wants line and link the VT to kmscon" \
+		"==> If pacman removed this package to install another vtium console package," \
+		"    nothing. Otherwise vtium is removed, but these links to vtium@.service" \
 		"    The kmscon link, for a VT that kmscon served:" \
 		"    VT, with sudo systemctl start getty@ttyN.service. Started while vtium" \
 		"      sudo ln -s /usr/lib/systemd/system/kmsconvt@.service \\" \
-		"    Next time, run sudo vtium console disable --all before pacman -R vtium." \
+		"    Next time, run sudo vtium console disable --all before you remove vtium's" \
+		"    console package." \
+		"!    Next time, run sudo vtium console disable --all before pacman -R vtium." \
 		"!    install vtium again, run sudo vtium console disable --all, then remove it."
 
 	# vtium console's records outlive the package, and the message names the
@@ -100,6 +104,31 @@ for script in "${scripts[@]}"; do
 		"      https://github.com/vtium/vtium-arch#sharing-vts-with-kmscon" \
 		"!      sudo systemctl enable vtium@tty3.service"
 
+	# Installed in place of another vtium console package, which pacman
+	# removed through the conflicts, the package finds the links that one
+	# left, says the VTs stay vtium's, and does not say vtium runs on no VT.
+	reset
+	link vtium@.service autovt@tty3.service
+	link vtium@.service getty.target.wants/vtium@tty3.service
+	expect "$name: install in place of another console names the VTs vtium keeps" "$(run "$script" post_install)" \
+		"==> vtium already holds VTs on this machine, through these links, which the" \
+		"      /etc/systemd/system/autovt@tty3.service" \
+		"      /etc/systemd/system/getty.target.wants/vtium@tty3.service" \
+		"!==> vtium runs on no VT until you turn it on, the same as the kmscon package." \
+		"!==> No running vtium was restarted: a restart ends every session on its VT."
+	printf '#!/bin/sh\nprintf "vtium@tty3.service loaded active running vtium on tty3\\n"\n' >"$tmp/bin/systemctl"
+	expect "$name: install in place of another console names the VTs that still run the old build" "$(run "$script" post_install)" \
+		"==> vtium already holds VTs on this machine, through these links, which the" \
+		"==> No running vtium was restarted: a restart ends every session on its VT." \
+		"    These still run the build they started with:" "      vtium@tty3.service" \
+		"!==> vtium runs on no VT until you turn it on, the same as the kmscon package."
+	rm "$tmp/root/etc/systemd/system/autovt@tty3.service" "$tmp/root/etc/systemd/system/getty.target.wants/vtium@tty3.service"
+	expect "$name: install while vtium runs with no link names the running VT" "$(run "$script" post_install)" \
+		"==> No running vtium was restarted: a restart ends every session on its VT." \
+		"      vtium@tty3.service" \
+		"!==> vtium already holds VTs on this machine, through these links, which the" \
+		"!==> vtium runs on no VT until you turn it on, the same as the kmscon package."
+
 	# An upgrade names the VTs whose vtium still runs the old build.
 	reset
 	printf '#!/bin/sh\nprintf "vtium@tty3.service loaded active running vtium on tty3\\n"\n' >"$tmp/bin/systemctl"
@@ -115,11 +144,13 @@ for script in "${scripts[@]}"; do
 	link vtium@.service autovt@tty3.service
 	expect "$name: a removal while vtium runs, with a link left, says that VT has no console unit" "$(run "$script" pre_remove)" \
 		"      vtium@tty3.service" \
-		"    A VT whose link still names vtium@.service then has no console unit;"
+		"    A VT whose link still names vtium@.service then has no console unit;" \
+		"    package to install another vtium console package, that package"
 done
 # Every console package carries the same install text as vtium.
 for script in "${scripts[@]}"; do
 	name=${script#"$here/"}
+	[ "$name" != vtium/vtium.install ] || continue
 	if cmp -s "$script" "$here/vtium/vtium.install"; then
 		echo "ok   $name carries the same install text as vtium/vtium.install"
 	else
