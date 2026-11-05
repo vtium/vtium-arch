@@ -1,6 +1,6 @@
 pkgbase = vtium-minspec-git
 	pkgdesc = Terminal for the Linux console, drawn through KMS/DRM: the smallest build, with no pictures and no GPU path (git main)
-	pkgver = r1866.16e66a2
+	pkgver = 0.1.0alpha.5.r0.g2f54fa7
 	pkgrel = 1
 	url = https://github.com/vtium/vtium
 	install = vtium-minspec-git.install
@@ -16,7 +16,7 @@ pkgbase = vtium-minspec-git
 	optdepends = vtium-fonts: the fonts the shipped frits name
 	optdepends = kbd: console fonts, which vtium draws when no frit is set
 	optdepends = kmscon-terminfo: the terminfo entry kmscon, for sessions run with term=kmscon
-	provides = vtium=r1866.16e66a2
+	provides = vtium=0.1.0alpha.5.r0.g2f54fa7
 	conflicts = vtium
 	options = !debug
 	backup = etc/vtium/fonts/minspec-16.vtfrit
