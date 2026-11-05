@@ -70,7 +70,7 @@ git commit -q --allow-empty -am "the aur-publish under test"
 rm -f vtium/keys/pgp/*.asc
 GNUPGHOME=$keys gpg --batch --armor --export "$signer" >"vtium/keys/pgp/$signer.asc"
 sed -i -e "s|^_tag=.*|_tag=$tag|" \
-	-e "s|^source=.*|source=(\"vtium::git+file://$tmp/src#tag=\${_tag}?signed\")|" \
+	-e "s|git+https://github.com/vtium/vtium.git#tag=|git+file://$tmp/src#tag=|" \
 	-e "s|^validpgpkeys=.*|validpgpkeys=('$signer')|" vtium/PKGBUILD
 (cd vtium && makepkg --printsrcinfo >.SRCINFO)
 git add -A vtium
@@ -121,7 +121,7 @@ git reset -q --hard HEAD~1
 # a later check. Its steps changed alone are refused.
 cp -r vtium-terminfo vtium-terminfo-git
 sed -i -e "s|^pkgname=.*|pkgname=vtium-terminfo-git|" -e "s|^_tag=.*|_tag=v9.9.9-missing|" \
-	-e "s|^source=.*|source=(\"vtium::git+file://$tmp/src#tag=\${_tag}?signed\")|" vtium-terminfo-git/PKGBUILD
+	-e "s|git+https://github.com/vtium/vtium.git#tag=|git+file://$tmp/src#tag=|" vtium-terminfo-git/PKGBUILD
 (cd vtium-terminfo-git && makepkg --printsrcinfo >.SRCINFO)
 git add -A vtium-terminfo-git
 git commit -q -m "a stand-in twin"
