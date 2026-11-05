@@ -30,7 +30,7 @@ arch=('x86_64')
 url='https://github.com/vtium/vtium'
 license=('MIT')
 depends=('glibc' 'libgcc' 'libxkbcommon' 'systemd-libs' 'vtium-terminfo')
-makedepends=('cargo' 'git' 'libxkbcommon' 'systemd-libs')
+makedepends=('cargo' 'git')
 optdepends=('libglvnd: libEGL.so.1, which the GPU path loads when hwaccel is on'
             'mesa: libgbm.so.1, which the GPU path loads, and the EGL driver for most cards'
             'vtium-fonts: the fonts the shipped frits name'
