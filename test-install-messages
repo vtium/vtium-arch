@@ -61,9 +61,10 @@ for script in "${scripts[@]}"; do
 		"      sudo systemctl add-wants getty.target getty@tty1.service" \
 		"!      sudo systemctl enable --now getty@tty1.service" \
 		"      sudo systemctl daemon-reload" \
-		"    served a VT, skip that VT's add-wants line and link the VT to kmscon" \
+		"    again. Where kmscon served a VT, skip that VT's add-wants line and link" \
 		"==> If pacman removed this package to install another vtium console package," \
-		"    nothing. Otherwise vtium is removed, but these links to vtium@.service" \
+		"    vtium@.service again, the links below stay valid, and you do not need to" \
+		"    do anything. Otherwise vtium is removed, but these links to" \
 		"    The kmscon link, for a VT that kmscon served:" \
 		"    VT, with sudo systemctl start getty@ttyN.service. Started while vtium" \
 		"      sudo ln -s /usr/lib/systemd/system/kmsconvt@.service \\" \
@@ -114,6 +115,7 @@ for script in "${scripts[@]}"; do
 		"==> vtium already holds VTs on this machine, through these links, which the" \
 		"      /etc/systemd/system/autovt@tty3.service" \
 		"      /etc/systemd/system/getty.target.wants/vtium@tty3.service" \
+		"    vtium's and you do not need to change anything:" \
 		"!==> vtium runs on no VT until you turn it on, the same as the kmscon package." \
 		"!==> No running vtium was restarted: a restart ends every session on its VT."
 	printf '#!/bin/sh\nprintf "vtium@tty3.service loaded active running vtium on tty3\\n"\n' >"$tmp/bin/systemctl"
@@ -121,11 +123,14 @@ for script in "${scripts[@]}"; do
 		"==> vtium already holds VTs on this machine, through these links, which the" \
 		"==> No running vtium was restarted: a restart ends every session on its VT." \
 		"    These still run the build they started with:" "      vtium@tty3.service" \
+		"!    No link gives vtium these VTs at their next start, so each goes back to" \
 		"!==> vtium runs on no VT until you turn it on, the same as the kmscon package."
 	rm "$tmp/root/etc/systemd/system/autovt@tty3.service" "$tmp/root/etc/systemd/system/getty.target.wants/vtium@tty3.service"
 	expect "$name: install while vtium runs with no link names the running VT" "$(run "$script" post_install)" \
 		"==> No running vtium was restarted: a restart ends every session on its VT." \
 		"      vtium@tty3.service" \
+		"    No link gives vtium these VTs at their next start, so each goes back to" \
+		"      sudo vtium console enable 3" \
 		"!==> vtium already holds VTs on this machine, through these links, which the" \
 		"!==> vtium runs on no VT until you turn it on, the same as the kmscon package."
 
@@ -145,7 +150,8 @@ for script in "${scripts[@]}"; do
 	expect "$name: a removal while vtium runs, with a link left, says that VT has no console unit" "$(run "$script" pre_remove)" \
 		"      vtium@tty3.service" \
 		"    A VT whose link still names vtium@.service then has no console unit;" \
-		"    package to install another vtium console package, that package"
+		"    package to install another vtium console package, that package" \
+		"    installs vtium@.service again, the links stay valid, and you do not need"
 done
 # Every console package carries the same install text as vtium.
 for script in "${scripts[@]}"; do

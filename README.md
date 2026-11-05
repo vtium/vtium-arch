@@ -72,7 +72,7 @@ The `terminus` frit names its font by the file name that Arch's `terminus-font` 
 
 pacman keeps the edits you make to a frit across an upgrade. When the package's copy of a frit changes too, pacman installs it beside yours with the suffix `.pacnew`.
 
-A switch from one console package to another is a removal and an install, not an upgrade, so pacman saves each frit you edited as `NAME.vtfrit.pacsave` and installs the new package's copy in its place, and a switch from `vtium` or `vtium-git` to a minspec package removes the `desktop` and `terminus` frits, so a `font-name` that names either must change. To keep an edited frit, copy it back after the switch, such as `sudo cp /etc/vtium/fonts/minspec-16.vtfrit.pacsave /etc/vtium/fonts/minspec-16.vtfrit`.
+A switch from one console package to another is a removal and an install, not an upgrade, so pacman saves each frit you edited as `NAME.vtfrit.pacsave` and installs the new package's copy in its place. A switch from `vtium` or `vtium-git` to a minspec package also removes the `desktop` and `terminus` frits, so a `font-name` that names either must change. To keep an edited frit, copy it back after the switch, such as `sudo cp /etc/vtium/fonts/minspec-16.vtfrit.pacsave /etc/vtium/fonts/minspec-16.vtfrit`.
 
 ## Building a package
 
