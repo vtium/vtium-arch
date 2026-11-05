@@ -1,0 +1,89 @@
+# Maintainer: Aaron Bockelie <aaronsb@gmail.com>
+#
+# vtium's smallest console, built from a release tag: the minspec build,
+# with no feature, so it draws no pictures and has no GPU path, for a
+# single-board computer, a server's console or a kiosk (ADR-1500 D8). It is
+# the build tier 3 judges. The maintainer signs the tag with the PGP key in
+# validpgpkeys, and makepkg checks the tag's signature before it builds.
+# Import the key once: gpg --import keys/pgp/*.asc, or
+# gpg --recv-keys 33F9B54FD2A4B6A4110749B3BA464FC9847A832A.
+#
+# vtium-minspec provides vtium and conflicts with it, so a machine holds one
+# console package at a time, and a package that depends on vtium is met by
+# this one too. vtium's terminfo entry comes from the vtium-terminfo package.
+#
+# pkgver is the tag without its v and without the hyphen before a
+# pre-release: v0.1.0-alpha.1 is 0.1.0alpha.1, which pacman sorts before
+# 0.1.0 (vercmp).
+
+pkgname=vtium-minspec
+_tag=v0.1.0-alpha.5
+pkgver=0.1.0alpha.5
+pkgrel=1
+pkgdesc='Terminal for the Linux console, drawn through KMS/DRM: the smallest build, with no pictures and no GPU path'
+arch=('x86_64')
+url='https://github.com/vtium/vtium'
+license=('MIT')
+depends=('glibc' 'libgcc' 'libxkbcommon' 'systemd-libs' 'vtium-terminfo')
+makedepends=('cargo' 'git' 'libxkbcommon' 'systemd-libs')
+optdepends=('vtium-fonts: the fonts the shipped frits name'
+            'kbd: console fonts, which vtium draws when no frit is set'
+            'kmscon-terminfo: the terminfo entry kmscon, for sessions run with term=kmscon')
+provides=("vtium=$pkgver")
+conflicts=('vtium')
+# The frits _make names in FRITS, which keep a user's edits across an
+# upgrade (ADR-1500 D8).
+backup=('etc/vtium/fonts/minspec-16.vtfrit'
+        'etc/vtium/fonts/minspec-8.vtfrit')
+install=vtium-minspec.install
+options=('!debug')
+source=("vtium::git+https://github.com/vtium/vtium.git#tag=${_tag}?signed")
+sha256sums=('SKIP')
+validpgpkeys=('33F9B54FD2A4B6A4110749B3BA464FC9847A832A') # Aaron Bockelie <aaronsb@gmail.com>
+
+# Everything below is the same in vtium-minspec-git/PKGBUILD and
+# vtium-minspec/PKGBUILD; aur-publish refuses a package whose copy differs
+# from the other's.
+
+prepare() {
+  cd vtium
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/^host: //p')"
+}
+
+# vtium's Makefile builds and stages every file the package ships, so which
+# file goes where lives in vtium's tree (ADR-1500 D1, D3). Each call names
+# the same build, so make install in package() finds the build that build()
+# made, and builds nothing again:
+#
+#   - PREFIX=/usr, so the console starts its glyph helper at
+#     /usr/bin/vtium-config.
+#   - FEATURES, the console's features: none, the minspec build, while
+#     VTIUM_FEATURES is unset in makepkg's environment (ADR-1500 D2, D8).
+#     VTIUM_FEATURES names other features, such as VTIUM_FEATURES=gpu.
+#     Whatever it names, the package's dependencies and the two settings
+#     below stay those of the default build.
+#   - HWACCEL=off and DISPLAY_BUFFERS=2, the defaults the console and
+#     vtium-config read for hwaccel and display-buffers (ADR-1500 D8). The
+#     minspec build has no GPU path, and keeps two buffers for each display.
+#   - FRITS, the frits make install stages into /etc/vtium/fonts, which the
+#     package's backup list names.
+#   - --frozen, because prepare() fetched the crates.
+_make() {
+  CARGO_TARGET_DIR=target make -C "$srcdir/vtium" PREFIX=/usr \
+    FEATURES="${VTIUM_FEATURES-}" HWACCEL=off \
+    DISPLAY_BUFFERS=2 FRITS='minspec-16 minspec-8' \
+    CARGO_BUILD_FLAGS=--frozen "$@"
+}
+
+# The console, built with vtium's minspec profile, and its glyph helper.
+build() {
+  _make install-build
+}
+
+# The console, its helper, its units vtium@.service and vtium-getty@.service,
+# the example configuration /etc/vtium/vtium.conf.example, the frits in
+# /etc/vtium/fonts, the example udev rules and hwdb fragment, the head
+# file's template, and the license.
+package() {
+  _make install DESTDIR="$pkgdir" PKGNAME="$pkgname"
+}
