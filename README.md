@@ -5,10 +5,13 @@ The Arch Linux packages of vtium, a terminal for the Linux console that draws th
 | Directory | AUR repository | Packages it builds | What it builds from |
 |---|---|---|---|
 | `vtium/` | `vtium` | `vtium`, the console for an ordinary desktop or laptop | a release: the tag `v0.1.0-alpha.5`, checked against the maintainer's signature |
-| `vtium-git/` | `vtium-git` | `vtium-git`, the same console, and `vtium-terminfo-git` | the tip of vtium's `main` branch on GitHub |
+| `vtium-git/` | `vtium-git` | `vtium-git`, the same console | the tip of vtium's `main` branch on GitHub |
 | `vtium-minspec/` | `vtium-minspec` | `vtium-minspec`, vtium's smallest console, with no pictures and no GPU path | the same release tag |
+| `vtium-minspec-git/` | `vtium-minspec-git` | `vtium-minspec-git`, the same console | the tip of `main` |
 | `vtium-minspec-gpu/` | `vtium-minspec-gpu` | `vtium-minspec-gpu`, the smallest console with the GPU path | the same release tag |
+| `vtium-minspec-gpu-git/` | `vtium-minspec-gpu-git` | `vtium-minspec-gpu-git`, the same console | the tip of `main` |
 | `vtium-terminfo/` | `vtium-terminfo` | `vtium-terminfo`, vtium's terminfo entry | the same release tag |
+| `vtium-terminfo-git/` | `vtium-terminfo-git` | `vtium-terminfo-git`, the same entry | the tip of `main` |
 | `vtium-fonts/` | `vtium-fonts` | `vtium-fonts`, which installs no font and depends on the fonts the frits name | this repository alone |
 
 The AUR keeps one recipe per git repository, named for the recipe's `pkgbase`, with its `PKGBUILD` and `.SRCINFO` at the root. Here each recipe is a directory, and `aur-publish` pushes one directory's history to its AUR repository as that repository's root (below). vtium keeps this repository as a submodule at `packaging/arch`, beside a repository for each other package manager.
@@ -17,7 +20,7 @@ The packaged vtium lags development on purpose. It is a real-world test of how v
 
 ## What the packages install
 
-There are four console packages: `vtium`, `vtium-git`, `vtium-minspec` and `vtium-minspec-gpu`. Each installs `/usr/bin/vtium`, its helpers and its units, so a machine holds one of them at a time. Every console package but `vtium` provides `vtium` at its own version and conflicts with `vtium`, and `vtium` names each of the others in its conflicts, so installing one console package asks to remove the one installed before, and a package that depends on `vtium` is met by any of them. `vtium-minspec-git` and `vtium-minspec-gpu-git` are named in `vtium`'s conflicts for when they are published. Each console package depends on vtium's terminfo entry: the packages built from the release tag on `vtium-terminfo`, and `vtium-git` on `vtium-terminfo-git`, which provides and conflicts with `vtium-terminfo`. `vtium-terminfo` also installs alone, on a machine that reaches a vtium console over ssh and runs none itself.
+There are six console packages: `vtium`, `vtium-minspec` and `vtium-minspec-gpu`, built from the release tag, and their twins built from `main`, `vtium-git`, `vtium-minspec-git` and `vtium-minspec-gpu-git`. A `-git` recipe differs from its release recipe only in its source and its version. Each installs `/usr/bin/vtium`, its helpers and its units, so a machine holds one of them at a time. Every console package but `vtium` provides `vtium` at its own version and conflicts with `vtium`, and `vtium` names each of the others in its conflicts, so installing one console package asks to remove the one installed before, and a package that depends on `vtium` is met by any of them. Each console package depends on vtium's terminfo entry: the packages built from the release tag on `vtium-terminfo`, and the `-git` packages on `vtium-terminfo-git`, which provides `vtium-terminfo` at its own version and conflicts with it. `vtium-terminfo` also installs alone, on a machine that reaches a vtium console over ssh and runs none itself.
 
 | File | Package | What it is |
 |---|---|---|
@@ -49,7 +52,7 @@ The GPU path is off by default in vtium 0.1.0-alpha.5, so the console draws ever
 
 ### The smallest builds
 
-`vtium-minspec` and `vtium-minspec-gpu` are for a single-board computer, a server's console or a kiosk, where a picture decoder or logind is weight that nothing uses. `vtium-minspec` builds the console with no feature at all: the build that vtium's tier 3 tests judge in a virtual machine, so their figures for size and memory speak for it. `vtium-minspec-gpu` adds the feature `gpu` alone, for a small machine whose GPU is worth using. Neither draws pictures, so neither ships the image helper or `vtium-gallery`, and both keep two buffers for each display. `vtium --version` names the features each was built with: `features none` and `features gpu`.
+`vtium-minspec` and `vtium-minspec-gpu`, and their `-git` twins, are for a single-board computer, a server's console or a kiosk, where a picture decoder or logind is weight that nothing uses. `vtium-minspec` builds the console with no feature at all: the build that vtium's tier 3 tests judge in a virtual machine, so their figures for size and memory speak for it. `vtium-minspec-gpu` adds the feature `gpu` alone, for a small machine whose GPU is worth using. Neither draws pictures, so neither ships the image helper or `vtium-gallery`, and both keep two buffers for each display. `vtium --version` names the features each was built with: `features none` and `features gpu`.
 
 `vtium-minspec-gpu` leaves `hwaccel` off, and a line `hwaccel` in `/etc/vtium/vtium.conf` turns its GPU path on, as for `vtium`. It lists `libglvnd` and `mesa` as optional dependencies, so pacman installs neither unless you ask, and its console draws on the CPU on a machine without them. Install both to turn `hwaccel` on. `vtium-minspec` has no GPU path and needs neither.
 
@@ -61,7 +64,7 @@ A frit (a font set file) names the fonts the glyph helper draws from. The consol
 - `terminus`, which draws the Terminus console font at 8x16 cells over the built-in unifont;
 - `minspec-16` and `minspec-8`, which add the symbols of Nerd Fonts and color emoji over vtium's built-in fonts.
 
-`vtium-minspec` and `vtium-minspec-gpu` install `minspec-16` and `minspec-8`. A frit changes nothing until you choose it, with `vtium config` or with a line such as `font-name=desktop` in `/etc/vtium/vtium.conf`.
+The four minspec packages install `minspec-16` and `minspec-8`. A frit changes nothing until you choose it, with `vtium config` or with a line such as `font-name=desktop` in `/etc/vtium/vtium.conf`.
 
 The packages install no font file. The glyph helper finds a frit's fonts among the fonts installed on the machine, under `/usr/share/fonts` and, for a console font, under `/usr/share/kbd/consolefonts`, and leaves out a font the machine lacks. `vtium-fonts` installs the fonts these frits name, through four of Arch's packages: `ttf-jetbrains-mono`, `ttf-nerd-fonts-symbols-mono`, `noto-fonts-emoji` and `terminus-font`. It installs no file of its own beyond its license. Every console package lists it as an optional dependency, so the fonts stay optional: install `vtium-fonts`, or only the font packages you want.
 
@@ -71,23 +74,16 @@ pacman keeps the edits you make to a frit across an upgrade. When the package's 
 
 ## Building a package
 
-Build a recipe with makepkg from its directory, and install its packages with pacman. A console package built from the release tag depends on `vtium-terminfo`, which makepkg cannot fetch from the AUR, so build and install `vtium-terminfo` first, or let an AUR helper such as `yay` do both:
+Build a recipe with makepkg from its directory, and install its packages with pacman. A console package depends on vtium's terminfo entry, which makepkg cannot fetch from the AUR, so build and install the entry first, or let an AUR helper such as `yay` do both: `vtium-terminfo` for a console built from the release tag, and `vtium-terminfo-git` for a `-git` console.
 
 ```sh
 cd vtium-terminfo && makepkg -si && cd ..
 cd vtium-minspec && makepkg -si
 ```
 
-`vtium-git` builds `vtium-terminfo-git` beside its console, so one run installs both:
-
-```sh
-cd vtium-git
-makepkg -si
-```
-
 makepkg clones vtium from GitHub and, for a console, fetches its crates with `cargo fetch --locked`. From there it builds offline, with the host's own toolchain, through vtium's Makefile: `build()` runs `make install-build`, and each package's `package()` runs `make install` or `make install-terminfo`, which find that build and build nothing again. A console needs `cargo`, `git`, `libxkbcommon` and `systemd-libs`, and the terminfo entry needs `git` and `ncurses` (for `tic`), besides the `base-devel` group that every makepkg build needs, which holds `make`, `pkgconf` and `binutils`. `vtium-fonts` builds nothing.
 
-Each console recipe names its features, which it builds while `VTIUM_FEATURES` is unset: `images logind gpu` for `vtium` and `vtium-git`, none for `vtium-minspec`, and `gpu` for `vtium-minspec-gpu`. `VTIUM_FEATURES` in makepkg's environment names other features, such as `VTIUM_FEATURES='images logind' makepkg -si`, and the recipe hands it to make as `FEATURES`. Set but empty, as in `VTIUM_FEATURES= makepkg -si`, it names no feature, and the recipe builds the minspec console, vtium's smallest build. Whatever `VTIUM_FEATURES` names, the package keeps the dependencies, the frits and the two build settings of its recipe's default build: `hwaccel` off in every package, three buffers for each display in `vtium` and `vtium-git`, and two in `vtium-minspec` and `vtium-minspec-gpu`.
+Each console recipe names its features, which it builds while `VTIUM_FEATURES` is unset: `images logind gpu` for `vtium` and `vtium-git`, none for `vtium-minspec` and `vtium-minspec-git`, and `gpu` for `vtium-minspec-gpu` and `vtium-minspec-gpu-git`. `VTIUM_FEATURES` in makepkg's environment names other features, such as `VTIUM_FEATURES='images logind' makepkg -si`, and the recipe hands it to make as `FEATURES`. Set but empty, as in `VTIUM_FEATURES= makepkg -si`, it names no feature, and the recipe builds the minspec console, vtium's smallest build. Whatever `VTIUM_FEATURES` names, the package keeps the dependencies, the frits and the two build settings of its recipe's default build: `hwaccel` off in every package, three buffers for each display in `vtium` and `vtium-git`, and two in the four minspec packages.
 
 A build in a clean chroot checks that the dependencies are complete, since it starts from a system that holds only `base-devel` and what the recipe names. It needs root, so the maintainer runs it, from the recipe's directory, with `devtools` installed:
 
@@ -104,23 +100,23 @@ gpg --import vtium/keys/pgp/33F9B54FD2A4B6A4110749B3BA464FC9847A832A.asc
 gpg --recv-keys 33F9B54FD2A4B6A4110749B3BA464FC9847A832A
 ```
 
-`vtium-git` is not checked against a signature. The tip of vtium's `main` is a merge commit that GitHub makes and signs with GitHub's own key, not the maintainer's.
+A `-git` recipe is not checked against a signature. The tip of vtium's `main` is a merge commit that GitHub makes and signs with GitHub's own key, not the maintainer's.
 
 ### Versions
 
 The `pkgver` of each recipe built from the release tag is the tag without its `v` and without the hyphen before a pre-release: the tag `v0.1.0-alpha.1` is `0.1.0alpha.1`. pacman forbids a hyphen in a version, and the Arch package guidelines replace one with an underscore, but pacman sorts `0.1.0_alpha.1` after `0.1.0`, so an upgrade to the final release would look like a downgrade. `0.1.0alpha.1` sorts before `0.1.0`, as `vercmp` shows.
 
-`vtium-git`'s `pkgver` is `r<commits>.<hash>` until vtium has a version tag. After that it is the last tag, mapped the same way, then `.r<commits since the tag>.g<hash>`, such as `0.1.0alpha.1.r5.g1234abc`. The console is built with that version as its revision, so the `Revision` line vtium logs at start names the build that `pacman -Q vtium-git` names.
+A `-git` recipe's `pkgver` is `r<commits>.<hash>` until vtium has a version tag. After that it is the last tag, mapped the same way, then `.r<commits since the tag>.g<hash>`, such as `0.1.0alpha.1.r5.g1234abc`. The console is built with that version as its revision, so the `Revision` line vtium logs at start names the build that `pacman -Q vtium-git` names, and the same for the other `-git` consoles.
 
 ### Building from a local checkout
 
-Two environment variables point the `vtium-git` build at another repository and branch, such as a vtium checkout on the same machine. `VTIUM_GIT_URL` names the repository and `VTIUM_GIT_BRANCH` names the branch; unset, they are GitHub's repository and `main`.
+Two environment variables point a `-git` build at another repository and branch, such as a vtium checkout on the same machine. `VTIUM_GIT_URL` names the repository and `VTIUM_GIT_BRANCH` names the branch; unset, they are GitHub's repository and `main`.
 
 ```sh
 VTIUM_GIT_URL=file:///home/me/src/vtium VTIUM_GIT_BRANCH=my-branch makepkg -f
 ```
 
-makepkg builds the branch's last commit, so commit the changes first. It keeps its clone of the repository in `vtium-git/vtium`, and the next build fetches into it. When the variables name another repository than the clone came from, makepkg stops with "vtium is not a clone of" that repository; delete `vtium-git/vtium` and build again.
+makepkg builds the branch's last commit, so commit the changes first. It keeps its clone of the repository in the recipe's directory, such as `vtium-git/vtium`, and the next build fetches into it. When the variables name another repository than the clone came from, makepkg stops with "vtium is not a clone of" that repository; delete the clone and build again.
 
 ## Running vtium on a VT
 
@@ -228,7 +224,7 @@ Removing the package changes no unit, so a VT you did not give back keeps links 
 
 - that DIR is committed, and its `.SRCINFO` is what `makepkg --printsrcinfo` prints;
 - that no checksum is a placeholder;
-- that a recipe and its `-git` twin, such as `vtium` and `vtium-git`, share the same steps, everything in `PKGBUILD` from the line `# Everything below is the same`, and the same copy of every other file both carry, such as `LICENSE` and the `terminus` frit, since each AUR repository must stand alone and so carries its own copy; a recipe whose twin is not in this repository, such as `vtium-minspec` today, has nothing to compare;
+- that a recipe and its `-git` twin, such as `vtium` and `vtium-git`, share the same steps, everything in `PKGBUILD` from the line `# Everything below is the same`, and the same copy of every other file both carry, such as `LICENSE` and the `terminus` frit, since each AUR repository must stand alone and so carries its own copy; `vtium-fonts`, which has no twin, has nothing to compare;
 - that a release's tag exists on GitHub, and that it is signed by a key in `validpgpkeys`, checked against the key files in DIR's `keys/pgp/` alone, in a keyring of its own, with no configuration of the user's, so it never reaches the user's own keys or asks for a passphrase;
 - that every commit it pushes holds `PKGBUILD` and `.SRCINFO`, as the AUR asks.
 
@@ -239,7 +235,7 @@ Removing the package changes no unit, so a VT you did not give back keeps links 
 ./aur-publish vtium-git
 ```
 
-Before you commit a change to a `PKGBUILD`, make its `.SRCINFO` again with the build variables unset, and set `vtium-git`'s `pkgver` back to the value for GitHub's main, since makepkg rewrites it after each build:
+Before you commit a change to a `PKGBUILD`, make its `.SRCINFO` again with the build variables unset, and set a `-git` recipe's `pkgver` back to the value for GitHub's main, since makepkg rewrites it after each build:
 
 ```sh
 env -u VTIUM_GIT_URL -u VTIUM_GIT_BRANCH -u VTIUM_FEATURES makepkg --printsrcinfo > .SRCINFO
@@ -247,7 +243,7 @@ env -u VTIUM_GIT_URL -u VTIUM_GIT_BRANCH -u VTIUM_FEATURES makepkg --printsrcinf
 
 Each recipe built from a release tag waits for its tag: `aur-publish` refuses it until the maintainer has signed and pushed the tag its `_tag` names.
 
-The AUR gives each package name to one AUR repository. `vtium-terminfo` was built by the `vtium` recipe until it moved to a recipe of its own, so publish `vtium` first, which no longer builds it, and `vtium-terminfo` after. `vtium-git` still builds `vtium-terminfo-git`.
+The AUR gives each package name to one AUR repository. `vtium-terminfo` was built by the `vtium` recipe until it moved to a recipe of its own, so publish `vtium` first, which no longer builds it, and `vtium-terminfo` after. In the same way, publish `vtium-git` before `vtium-terminfo-git`.
 
 ## License
 

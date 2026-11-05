@@ -115,21 +115,14 @@ git commit -q -am "drift"
 expect "differ; make them the same in both" "shared steps that differ are refused" vtium-git
 git reset -q --hard HEAD~1
 
-# Each recipe is compared with its own -git twin alone: a stand-in
-# vtium-terminfo-git, made from vtium-terminfo, passes the comparison although
-# its steps differ from vtium's and vtium-git's, and stops at its missing tag,
-# a later check. Its steps changed alone are refused.
-cp -r vtium-terminfo vtium-terminfo-git
-sed -i -e "s|^pkgname=.*|pkgname=vtium-terminfo-git|" -e "s|^_tag=.*|_tag=v9.9.9-missing|" \
-	-e "s|git+https://github.com/vtium/vtium.git#tag=|git+file://$tmp/src#tag=|" vtium-terminfo-git/PKGBUILD
-(cd vtium-terminfo-git && makepkg --printsrcinfo >.SRCINFO)
-git add -A vtium-terminfo-git
-git commit -q -m "a stand-in twin"
-expect "which has no such tag yet" "a recipe is compared with its own twin alone" vtium-terminfo-git
+# Each recipe is compared with its own -git twin alone: vtium-terminfo-git
+# passes, although its steps differ from vtium's and vtium-git's, and its
+# steps changed alone are refused.
+expect pass "a recipe is compared with its own twin alone" vtium-terminfo-git
 echo "# a change in one recipe alone" >>vtium-terminfo-git/PKGBUILD
 git commit -q -am "drift in the twin"
 expect "differ; make them the same in both" "a twin whose shared steps differ is refused" vtium-terminfo-git
-git reset -q --hard HEAD~2
+git reset -q --hard HEAD~1
 
 # A file both twins carry, such as the Terminus frit, stays the same in both.
 echo "# a change in one copy alone" >>vtium/terminus.vtfrit
