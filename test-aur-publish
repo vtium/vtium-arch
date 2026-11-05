@@ -131,6 +131,12 @@ git commit -q -am "drift in the twin"
 expect "differ; make them the same in both" "a twin whose shared steps differ is refused" vtium-terminfo-git
 git reset -q --hard HEAD~2
 
+# A file both twins carry, such as the Terminus frit, stays the same in both.
+echo "# a change in one copy alone" >>vtium/terminus.vtfrit
+git commit -q -am "a frit that differs from its twin's"
+expect "vtium-git/terminus.vtfrit and vtium/terminus.vtfrit differ" "a file that differs from its twin's copy is refused" vtium-git
+git reset -q --hard HEAD~1
+
 # What is pushed is what is committed, and .SRCINFO follows the PKGBUILD.
 echo "# uncommitted" >>vtium-git/PKGBUILD
 expect "has changes that are not committed" "an uncommitted change is refused" vtium-git
