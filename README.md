@@ -5,7 +5,7 @@ The Arch Linux packages of vtium, a terminal for the Linux console that draws th
 | Directory | AUR repository | Packages it builds | What it builds from |
 |---|---|---|---|
 | `vtium-git/` | `vtium-git` | `vtium-git`, `vtium-terminfo-git` | the tip of vtium's `main` branch on GitHub |
-| `vtium/` | `vtium` | `vtium`, `vtium-terminfo` | a release: the tag `v0.1.0-alpha.1`, checked against the maintainer's signature |
+| `vtium/` | `vtium` | `vtium`, `vtium-terminfo` | a release: the tag `v0.1.0-alpha.5`, checked against the maintainer's signature |
 
 The AUR keeps one recipe per git repository, named for the recipe's `pkgbase`, with its `PKGBUILD` and `.SRCINFO` at the root. Here each recipe is a directory, and `aur-publish` pushes one directory's history to its AUR repository as that repository's root (below). vtium keeps this repository as a submodule at `packaging/arch`, beside a repository for each other package manager.
 
@@ -17,23 +17,38 @@ Each recipe builds two packages: the console, and vtium's terminfo entry, which 
 
 | File | Package | What it is |
 |---|---|---|
-| `/usr/bin/vtium` | `vtium`, `vtium-git` | the console, built with vtium's minspec profile, its default and smallest build, and its subcommand `vtium console`, which gives VTs to vtium and takes them back |
-| `/usr/bin/vtium-config` | `vtium-git` | the font and settings tool that `vtium config` runs, which is also the glyph helper that vtium starts to draw the glyphs of a frit (a font set file) |
-| `/usr/bin/vtium-vitrify` | `vtium` | the same tool under the name it had in vtium 0.1.0-alpha.1; `vtium` installs it as `/usr/bin/vtium-config` from the next release |
+| `/usr/bin/vtium` | `vtium`, `vtium-git` | the console (below), and its subcommand `vtium console`, which gives VTs to vtium and takes them back |
+| `/usr/bin/vtium-config` | `vtium`, `vtium-git` | the font and settings tool that `vtium config` runs, which is also the glyph helper that vtium starts to draw the glyphs of a frit (a font set file) |
+| `/usr/bin/vtium-image` | `vtium`, `vtium-git` | the image helper, which vtium starts to decode the pictures that programs send, in a process of its own |
+| `/usr/lib/sysusers.d/vtium-image.conf` | `vtium`, `vtium-git` | the file from which pacman's sysusers hook creates the image helper's account, `vtium-image`, when the package is installed |
+| `/usr/bin/vtium-gallery` | `vtium`, `vtium-git` | a bash script that shows PNG pictures in vtium as a grid of thumbnails, each named under it |
 | `/usr/lib/systemd/system/vtium@.service` | `vtium`, `vtium-git` | the unit that runs vtium on one VT in place of its getty |
 | `/usr/lib/systemd/system/vtium-getty@.service` | `vtium`, `vtium-git` | the fallback that starts a getty on the VT when vtium fails |
 | `/etc/vtium/vtium.conf.example` | `vtium`, `vtium-git` | the example configuration, beside `/etc/vtium/vtium.conf`, the file vtium reads |
-| `/usr/share/doc/vtium/examples/` | `vtium`, `vtium-git` | the example udev rules and hwdb fragment, as documentation |
+| `/etc/vtium/fonts/desktop.vtfrit`, `minspec-16.vtfrit`, `minspec-8.vtfrit` | `vtium`, `vtium-git` | three frits (below) |
+| `/usr/share/doc/vtium/examples/` | `vtium`, `vtium-git` | the example udev rules and hwdb fragment, and `heads.conf`, the head file's commented template, as documentation |
 | `/usr/share/terminfo/x/xterm-vtium` | `vtium-terminfo`, `vtium-terminfo-git` | vtium's terminfo entry, which sessions in vtium name in `TERM` |
 | `/usr/share/licenses/<package>/LICENSE` | each | the license |
 
-Each recipe builds and stages these files with vtium's own make targets, so the knowledge of which file goes where lives in vtium's tree: `make install DESTDIR="$pkgdir" PREFIX=/usr` stages the console's package, and `make install-terminfo DESTDIR="$pkgdir" PREFIX=/usr` stages the terminfo package. vtium starts its helper at a path fixed when it is built, and `PREFIX=/usr` builds the console to start its glyph helper at `/usr/bin/vtium-config`, or at `/usr/bin/vtium-vitrify` in vtium 0.1.0-alpha.1. vtium's `tools/vt/units.sh` makes the two units from vtium's shipped `vtium@.service` and `vtium-getty@.service`: `Conflicts=` and `After=` lines naming `kmsconvt@%i.service` make starting vtium on a VT stop the kmscon console there first, and `DefaultInstance=tty1` gives way to `DefaultInstance=name-a-VT/vtium@ttyN`, which names no VT (below). `Alias=autovt@.service` stays. vtium reads its configuration from `/etc/vtium/vtium.conf`, its head file from `/etc/vtium/heads.conf` and its frits from `/etc/vtium/fonts`. The packages install none of them, so a vtium with no configuration runs with its defaults. To start a configuration of your own, copy the example beside it, with `sudo cp /etc/vtium/vtium.conf.example /etc/vtium/vtium.conf`. vtium reads nothing under `/etc/kmscon`, so a kmscon configuration never reaches vtium.
+Each recipe builds and stages these files with vtium's own make targets, so the knowledge of which file goes where lives in vtium's tree: `make install DESTDIR="$pkgdir" PREFIX=/usr` stages the console's package, and `make install-terminfo DESTDIR="$pkgdir" PREFIX=/usr` stages the terminfo package. vtium starts its helpers at paths fixed when it is built, and `PREFIX=/usr` builds the console to start its glyph helper at `/usr/bin/vtium-config` and its image helper at `/usr/bin/vtium-image`. vtium's `tools/vt/units.sh` makes the two units from vtium's shipped `vtium@.service` and `vtium-getty@.service`: `Conflicts=` and `After=` lines naming `kmsconvt@%i.service` make starting vtium on a VT stop the kmscon console there first, and `DefaultInstance=tty1` gives way to `DefaultInstance=name-a-VT/vtium@ttyN`, which names no VT (below). `Alias=autovt@.service` stays. vtium reads its configuration from `/etc/vtium/vtium.conf`, its head file from `/etc/vtium/heads.conf` and its frits from `/etc/vtium/fonts`. The packages install neither `vtium.conf` nor `heads.conf`, so a vtium with no configuration runs with its defaults. To start a configuration of your own, copy the example beside it, with `sudo cp /etc/vtium/vtium.conf.example /etc/vtium/vtium.conf`, and to give each display a terminal of its own, copy `/usr/share/doc/vtium/examples/heads.conf` to `/etc/vtium/heads.conf` and edit it. vtium reads nothing under `/etc/kmscon`, so a kmscon configuration never reaches vtium.
 
 The packages live beside the `kmscon` package and take none of its files: `kmscon` keeps `/usr/bin/kmscon`, `kmsconvt@.service`, `kmscon.service`, `/etc/kmscon/kmscon.conf.example` and the link `/etc/systemd/system/autovt@.service`, and `kmscon-terminfo` keeps the terminfo entry named `kmscon`. vtium names itself `TERM=xterm-vtium`, so its sessions read its own entry, and the kmscon console's sessions keep the one they were built for. A vtium run with `term=kmscon` needs `kmscon-terminfo`, which is an optional dependency.
 
-### What waits on vtium's main
+### The console's build
 
-`vtium-git` builds whatever GitHub's `main` holds. `main` has the make targets `install-build`, `install` and `install-terminfo` that both recipes call, so a `vtium-git` build from `main` succeeds. Until the vtium work that makes vtium's installs stand on their own reaches `main`, that build ships the example configuration as `/usr/share/doc/vtium/kmscon.conf.example`, and the vtium it builds reads `/etc/kmscon/kmscon.conf`. From then on, it ships `/etc/vtium/vtium.conf.example`, and vtium reads `/etc/vtium/vtium.conf`, as this README describes.
+Both recipes build the console with cargo's minspec profile and the features `images logind gpu`, for an ordinary desktop or laptop. `images` draws pictures, sent through sixel or the kitty graphics protocol, and it is why the packages ship the image helper and `vtium-gallery`. `logind` lets the power keys suspend the machine through logind. `gpu` builds in the GPU path, which draws through the graphics card. The console keeps three buffers for each display.
+
+The GPU path is off by default in vtium 0.1.0-alpha.5, so the console draws every frame on the CPU. To turn it on, add a line that reads `hwaccel` to `/etc/vtium/vtium.conf`, and restart vtium on each VT, as [Upgrades](#upgrades) shows. A display whose GPU set-up fails is drawn on the CPU. `vtium config config hwaccel` prints the value `/etc/vtium/vtium.conf` gives it, or the build's default. A later release turns the GPU path on by default.
+
+The console package depends on `libglvnd` and `mesa`. The GPU path loads `libEGL.so.1`, which `libglvnd` ships, and `libgbm.so.1`, which `mesa` ships, when it makes a GL context. The console links neither library, so it would start without them and draw on the CPU, but the package requires both so that turning `hwaccel` on works. EGL also needs a driver for the card, which `mesa` gives for most cards and NVIDIA's own driver gives for its cards. `logind` reaches logind through sd-bus in `systemd-libs`, which the package already depends on for udev. The image helper's decoders are written in Rust and link no library beyond the C runtime. `bash` runs `vtium-gallery`. `kbd`, whose console fonts vtium draws when no frit is set, is an optional dependency.
+
+### The frits
+
+A frit (a font set file) names the fonts the glyph helper draws from. The packages install three frits in `/etc/vtium/fonts`: `desktop`, which draws JetBrains Mono with the symbols of Nerd Fonts and Noto Color Emoji over vtium's built-in unifont, at 18 points, and `minspec-16` and `minspec-8`, which add the symbols of Nerd Fonts and color emoji over vtium's built-in fonts. A frit changes nothing until you choose it, with `vtium config` or with a line such as `font-name=desktop` in `/etc/vtium/vtium.conf`.
+
+The packages install no font file. The glyph helper finds a frit's fonts among the fonts installed on the machine, under `/usr/share/fonts`, and leaves out a font the machine lacks. On Arch, `ttf-jetbrains-mono`, `ttf-nerd-fonts-symbols-mono` and `noto-fonts-emoji` hold the fonts these frits name, and you install them yourself.
+
+pacman keeps the edits you make to a frit across an upgrade. When the package's copy of a frit changes too, pacman installs it beside yours with the suffix `.pacnew`.
 
 ## Building a package
 
@@ -44,7 +59,7 @@ cd vtium-git
 makepkg -si
 ```
 
-makepkg clones vtium from GitHub and fetches its crates with `cargo fetch --locked`. From there it builds offline, with the host's own toolchain, through vtium's Makefile: `build()` runs `make install-build`, and each package's `package()` runs `make install` or `make install-terminfo`, which find that build and build nothing again. It needs `cargo`, `git`, `ncurses` (for `tic`), `libxkbcommon` and `systemd-libs`, and the `base-devel` group that every makepkg build needs, which holds `make`. `VTIUM_FEATURES` in makepkg's environment builds the console with other features, such as `VTIUM_FEATURES='images logind' makepkg -si`; the recipe hands it to make as `FEATURES`. Unset, it builds the minspec console.
+makepkg clones vtium from GitHub and fetches its crates with `cargo fetch --locked`. From there it builds offline, with the host's own toolchain, through vtium's Makefile: `build()` runs `make install-build`, and each package's `package()` runs `make install` or `make install-terminfo`, which find that build and build nothing again. It needs `cargo`, `git`, `ncurses` (for `tic`), `libxkbcommon` and `systemd-libs`, and the `base-devel` group that every makepkg build needs, which holds `make`, `pkgconf` and `binutils`. With `VTIUM_FEATURES` unset, the recipe builds the console with `images logind gpu`, as [The console's build](#the-consoles-build) describes. `VTIUM_FEATURES` in makepkg's environment names other features, such as `VTIUM_FEATURES='images logind' makepkg -si`, and the recipe hands it to make as `FEATURES`. Set but empty, as in `VTIUM_FEATURES= makepkg -si`, it names no feature, and the recipe builds the minspec console, vtium's smallest build. Whatever `VTIUM_FEATURES` names, the package keeps the dependencies of the default build, the GPU path off and three buffers for each display.
 
 A build in a clean chroot checks that the dependencies are complete, since it starts from a system that holds only `base-devel` and what the recipe names. It needs root, so the maintainer runs it, from the recipe's directory, with `devtools` installed:
 
@@ -95,7 +110,7 @@ sudo vtium console disable --all   # every VT goes back to what it had before
 
 `systemctl enable vtium@.service`, with no VT named, fails and links nothing. Without that refusal it would do harm: `systemctl` links each `Alias=` before it looks at `WantedBy=`, so on a machine with no `/etc/systemd/system/autovt@.service` yet it would link that name to `vtium@.service`, and logind would start vtium on every VT it spawns. The unit's `DefaultInstance=name-a-VT/vtium@ttyN` names no VT, so `systemctl` refuses it before it links anything; it ignores `DefaultInstance=` when you name a VT. The refusal shows elsewhere too: `systemctl list-unit-files` lists `vtium@.service` as `bad`, and `systemctl is-enabled vtium@.service` fails, while `systemctl is-enabled vtium@tty3.service` answers as usual.
 
-When vtium on a VT fails, its unit starts it again after 100 ms, up to five times in ten seconds, and each failure also starts `vtium-getty@tty3`, which starts a getty on the VT unless vtium's head file sets a closed policy, so a VT is never left at a dead screen. The restart needs the unit from vtium's `integration` branch (above).
+When vtium on a VT fails, its unit starts it again after 100 ms, up to five times in ten seconds, and each failure also starts `vtium-getty@tty3`, which starts a getty on the VT unless vtium's head file sets a closed policy, so a VT is never left at a dead screen.
 
 ### Sharing VTs with kmscon
 
@@ -200,7 +215,7 @@ Before you commit a change to a `PKGBUILD`, make its `.SRCINFO` again with the b
 env -u VTIUM_GIT_URL -u VTIUM_GIT_BRANCH -u VTIUM_FEATURES makepkg --printsrcinfo > .SRCINFO
 ```
 
-`vtium` waits for its tag: `aur-publish vtium` refuses until the maintainer has signed and pushed `v0.1.0-alpha.1`.
+`vtium` waits for its tag: `aur-publish vtium` refuses until the maintainer has signed and pushed `v0.1.0-alpha.5`.
 
 ## License
 
