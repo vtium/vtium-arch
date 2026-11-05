@@ -1,5 +1,5 @@
 #!/bin/bash
-# Tests the messages vtium-git.install and vtium.install print, against a
+# Tests the messages each console package's install script prints, against a
 # scratch /etc/systemd/system and /var/lib/vtium and a stand-in systemctl,
 # and changes nothing on this machine: each function runs with the script's
 # /etc/systemd and /var/lib/vtium paths rewritten to the scratch root's.
@@ -40,7 +40,9 @@ reset() {
 }
 link() { ln -s "/usr/lib/systemd/system/$1" "$tmp/root/etc/systemd/system/$2"; }
 
-for script in "$here/vtium-git/vtium-git.install" "$here/vtium/vtium.install"; do
+# Every console package's install script.
+scripts=("$here"/*/*.install)
+for script in "${scripts[@]}"; do
 	name=${script#"$here/"}
 	reset
 	expect "$name: nothing left, nothing said" "$(run "$script" post_remove)" "!==> vtium is removed, but these links to vtium@.service are left and point at"
@@ -115,11 +117,15 @@ for script in "$here/vtium-git/vtium-git.install" "$here/vtium/vtium.install"; d
 		"      vtium@tty3.service" \
 		"    A VT whose link still names vtium@.service then has no console unit;"
 done
-if cmp -s "$here/vtium-git/vtium-git.install" "$here/vtium/vtium.install"; then
-	echo "ok   both recipes carry the same install text"
-else
-	echo "FAIL the two install files differ"
-	fails=$((fails + 1))
-fi
+# Every console package carries the same install text as vtium.
+for script in "${scripts[@]}"; do
+	name=${script#"$here/"}
+	if cmp -s "$script" "$here/vtium/vtium.install"; then
+		echo "ok   $name carries the same install text as vtium/vtium.install"
+	else
+		echo "FAIL $name differs from vtium/vtium.install"
+		fails=$((fails + 1))
+	fi
+done
 
 if [ "$fails" = 0 ]; then echo "test-install-messages: every case passed"; else echo "test-install-messages: $fails case(s) failed" >&2; exit 1; fi
