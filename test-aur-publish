@@ -70,7 +70,7 @@ git commit -q --allow-empty -am "the aur-publish under test"
 rm -f vtium/keys/pgp/*.asc
 GNUPGHOME=$keys gpg --batch --armor --export "$signer" >"vtium/keys/pgp/$signer.asc"
 sed -i -e "s|^_tag=.*|_tag=$tag|" \
-	-e "s|^source=.*|source=(\"vtium::git+file://$tmp/src#tag=\${_tag}?signed\")|" \
+	-e "s|git+https://github.com/vtium/vtium.git#tag=|git+file://$tmp/src#tag=|" \
 	-e "s|^validpgpkeys=.*|validpgpkeys=('$signer')|" vtium/PKGBUILD
 (cd vtium && makepkg --printsrcinfo >.SRCINFO)
 git add -A vtium
@@ -113,6 +113,26 @@ git reset -q --hard HEAD~1
 echo "# a change in one recipe alone" >>vtium/PKGBUILD
 git commit -q -am "drift"
 expect "differ; make them the same in both" "shared steps that differ are refused" vtium-git
+git reset -q --hard HEAD~1
+
+# Each recipe is compared with its own -git twin alone: vtium-terminfo-git
+# passes, although its steps differ from vtium's and vtium-git's, and its
+# steps changed alone are refused.
+expect pass "a recipe is compared with its own twin alone" vtium-terminfo-git
+echo "# a change in one recipe alone" >>vtium-terminfo-git/PKGBUILD
+git commit -q -am "drift in the twin"
+expect "differ; make them the same in both" "a twin whose shared steps differ is refused" vtium-terminfo-git
+git reset -q --hard HEAD~1
+
+# A file both twins carry, such as the Terminus frit, stays the same in both.
+echo "# a change in one copy alone" >>vtium/terminus.vtfrit
+git commit -q -am "a frit that differs from its twin's"
+expect "vtium-git/terminus.vtfrit and vtium/terminus.vtfrit differ" "a file that differs from its twin's copy is refused" vtium-git
+git reset -q --hard HEAD~1
+git rm -q vtium-git/terminus.vtfrit
+git commit -q -m "a frit only one twin holds"
+expect "vtium holds terminus.vtfrit and vtium-git does not" "a file only the twin holds is refused" vtium-git
+expect "vtium holds terminus.vtfrit and vtium-git does not" "a file only this recipe holds is refused" vtium
 git reset -q --hard HEAD~1
 
 # What is pushed is what is committed, and .SRCINFO follows the PKGBUILD.
