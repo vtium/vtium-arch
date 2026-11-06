@@ -7,7 +7,7 @@
 # Import the key once: gpg --import keys/pgp/*.asc, or
 # gpg --recv-keys 33F9B54FD2A4B6A4110749B3BA464FC9847A832A.
 # The console is built for an ordinary desktop or laptop, with the features
-# images logind gpu and hwaccel off (ADR-1500 D8), and VTIUM_FEATURES in
+# images logind gpu and hwaccel on (ADR-1500 D8), and VTIUM_FEATURES in
 # makepkg's environment names other features (below).
 #
 # pkgver is the tag without its v and without the hyphen before a
@@ -79,16 +79,17 @@ prepare() {
 #     VTIUM_FEATURES= makepkg, it names none, so the console is the minspec
 #     build. Whatever it names, the package's dependencies and the two
 #     settings below stay those of the default build.
-#   - HWACCEL=off and DISPLAY_BUFFERS=3, the defaults the console and
+#   - HWACCEL=on and DISPLAY_BUFFERS=3, the defaults the console and
 #     vtium-config read for hwaccel and display-buffers (ADR-1500 D8). The
-#     console draws on the CPU until a line hwaccel in /etc/vtium/vtium.conf
-#     turns the GPU path on, and keeps three buffers for each display.
+#     console draws on the GPU path unless a line no-hwaccel in
+#     /etc/vtium/vtium.conf turns it off, and keeps three buffers for each
+#     display.
 #   - FRITS, the frits make install stages into /etc/vtium/fonts, which each
 #     console package's backup list names.
 #   - --frozen, because prepare() fetched the crates.
 _make() {
   CARGO_TARGET_DIR=target make -C "$srcdir/vtium" PREFIX=/usr \
-    FEATURES="${VTIUM_FEATURES-images logind gpu}" HWACCEL=off \
+    FEATURES="${VTIUM_FEATURES-images logind gpu}" HWACCEL=on \
     DISPLAY_BUFFERS=3 FRITS='desktop minspec-16 minspec-8' \
     CARGO_BUILD_FLAGS=--frozen "$@"
 }

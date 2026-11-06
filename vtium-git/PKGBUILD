@@ -6,7 +6,7 @@
 # VTIUM_GIT_URL and VTIUM_GIT_BRANCH point the build at another repository
 # and branch, such as a local checkout. The console is built for an
 # ordinary desktop or laptop, with the features images logind gpu and
-# hwaccel off (ADR-1500 D8), and VTIUM_FEATURES names other features (below):
+# hwaccel on (ADR-1500 D8), and VTIUM_FEATURES names other features (below):
 #
 #   VTIUM_GIT_URL=file:///path/to/vtium VTIUM_GIT_BRANCH=my-branch makepkg -f
 #
@@ -93,16 +93,17 @@ prepare() {
 #     VTIUM_FEATURES= makepkg, it names none, so the console is the minspec
 #     build. Whatever it names, the package's dependencies and the two
 #     settings below stay those of the default build.
-#   - HWACCEL=off and DISPLAY_BUFFERS=3, the defaults the console and
+#   - HWACCEL=on and DISPLAY_BUFFERS=3, the defaults the console and
 #     vtium-config read for hwaccel and display-buffers (ADR-1500 D8). The
-#     console draws on the CPU until a line hwaccel in /etc/vtium/vtium.conf
-#     turns the GPU path on, and keeps three buffers for each display.
+#     console draws on the GPU path unless a line no-hwaccel in
+#     /etc/vtium/vtium.conf turns it off, and keeps three buffers for each
+#     display.
 #   - FRITS, the frits make install stages into /etc/vtium/fonts, which each
 #     console package's backup list names.
 #   - --frozen, because prepare() fetched the crates.
 _make() {
   CARGO_TARGET_DIR=target make -C "$srcdir/vtium" PREFIX=/usr \
-    FEATURES="${VTIUM_FEATURES-images logind gpu}" HWACCEL=off \
+    FEATURES="${VTIUM_FEATURES-images logind gpu}" HWACCEL=on \
     DISPLAY_BUFFERS=3 FRITS='desktop minspec-16 minspec-8' \
     CARGO_BUILD_FLAGS=--frozen "$@"
 }
