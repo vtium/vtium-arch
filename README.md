@@ -6,7 +6,7 @@ This repository is the Arch Linux packaging of [vtium](https://github.com/vtium/
 
 | Directory | What it builds | What it builds from |
 |---|---|---|
-| `vtium/` | the console for a desktop or laptop, with the features `images logind gpu` and the GPU path off by default | a release: the tag `v0.1.0-alpha.5`, checked against the maintainer's signature |
+| `vtium/` | the console for a desktop or laptop, with the features `images logind gpu` and the GPU path off by default | a release: the tag `v0.1.0-alpha.6`, checked against the maintainer's signature |
 | `vtium-git/` | the same console with the feature `bidi` too, for right-to-left text, and the GPU path on by default; `vtium` builds it that way from `v0.1.0-alpha.6` on | the tip of vtium's `main` |
 | `vtium-minspec/` | vtium's smallest console, with no feature | the same release tag |
 | `vtium-minspec-git/` | the same console | the tip of `main` |
