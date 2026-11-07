@@ -1,0 +1,129 @@
+name: watch vtium's releases
+
+# The watcher. When vtium publishes a release newer than the tag the release
+# recipes build, it moves the four release recipes to that release in one
+# pull request (./bump-release), and queues the pull request to merge once
+# build.yml's gate passes. build.yml then publishes the recipes to the AUR
+# from main.
+on:
+  schedule:
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+  # vtium's release workflow can send this event to start the watcher at
+  # once instead of at the next scheduled run.
+  repository_dispatch:
+    types: [vtium-release]
+
+# Two runs at once would race to push the same branch.
+concurrency:
+  group: watch-vtium-releases
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # create-pull-request opens the pull request as the owner of the token it
+  # is given. A pull request opened with the workflow's own GITHUB_TOKEN
+  # starts no workflow, so build.yml would never build it, it would carry no
+  # gate, and nothing would stand between the bump and the AUR. The watcher
+  # therefore needs BUMP_PAT, and it stops here when BUMP_PAT is unset,
+  # rather than open a pull request that nothing checks.
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the bump token
+        env:
+          BUMP_PAT: ${{ secrets.BUMP_PAT }}
+        run: |
+          test -n "$BUMP_PAT" || {
+            echo "::error::BUMP_PAT is unset; a bump pull request opened without it would start no build and carry no gate."
+            exit 1
+          }
+
+  bump:
+    needs: preflight
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Install the tools
+        run: pacman -Syu --noconfirm --needed git jq github-cli
+
+      - uses: actions/checkout@v5
+
+      # makepkg --printsrcinfo, which bump-release runs, refuses to run as
+      # root, which the container's user is.
+      - name: Create the bump user
+        run: |
+          useradd -m builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      # bump-release prints key=value lines, which become this step's
+      # outputs, or nothing when the recipes already build the newest
+      # release. Every step below is guarded on the output tag.
+      - name: Find vtium's newest release
+        id: up
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The shell, which runs as root, writes the outputs file, and
+          # bump-release, which runs as builder, only prints.
+          # shellcheck disable=SC2024
+          sudo -u builder --preserve-env=GH_TOKEN ./bump-release >> "$GITHUB_OUTPUT"
+
+      # create-pull-request runs git as root, so the workspace goes back to
+      # root.
+      - name: Give the workspace back to root
+        if: steps.up.outputs.tag
+        run: |
+          chown -R root:root "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git status --short
+
+      # One branch for every bump: when vtium publishes another release
+      # before the last bump merged, the watcher rewrites the open pull
+      # request to the newer release instead of opening a second one.
+      - name: Open the pull request
+        id: pr
+        if: steps.up.outputs.tag
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.BUMP_PAT }}
+          branch: bump/vtium-release
+          delete-branch: true
+          title: "vtium ${{ steps.up.outputs.tag }}"
+          commit-message: "bump: the release recipes build vtium ${{ steps.up.outputs.tag }}, in place of ${{ steps.up.outputs.current }}"
+          body: |
+            vtium published the release [${{ steps.up.outputs.tag }}](${{ steps.up.outputs.url }})${{ steps.up.outputs.prerelease == 'true' && ', a pre-release,' || '' }} and the release recipes built ${{ steps.up.outputs.current }}. The watcher (`.github/workflows/update.yml`, which runs `./bump-release`) moves the recipes ${{ steps.up.outputs.recipes }} to the tag `${{ steps.up.outputs.tag }}`, as pkgver `${{ steps.up.outputs.pkgver }}` and pkgrel 1, makes each one's `.SRCINFO` again, and rewrites the tag in the README's table.
+
+            build.yml builds every recipe from the new tag, checks the tag's signature against each recipe's `validpgpkeys`, and runs `aur-publish --dry-run` for each recipe. The watcher queues this pull request to merge once that build's gate passes, unless a recipe opts out with `ci/<recipe>/.no-auto-merge`. After the merge, build.yml on main publishes the four recipes to the AUR.
+
+      # A recipe opts out of the merge with ci/<recipe>/.no-auto-merge, and
+      # then the pull request waits for the maintainer. The watcher also
+      # refuses to queue the merge unless main's branch rule requires the
+      # gate: without that, GitHub would merge the pull request before its
+      # build finished.
+      - name: Queue the merge
+        if: steps.pr.outputs.pull-request-number
+        env:
+          GH_TOKEN: ${{ secrets.BUMP_PAT }}
+          PR: ${{ steps.pr.outputs.pull-request-number }}
+          RECIPES: ${{ steps.up.outputs.recipes }}
+        run: |
+          for r in $RECIPES; do
+            if [ -e "ci/$r/.no-auto-merge" ]; then
+              echo "::notice::#$PR waits for the maintainer, because ci/$r/.no-auto-merge opts $r out of the merge on a green build."
+              exit 0
+            fi
+          done
+          required=$( { gh api "repos/$GITHUB_REPOSITORY/branches/main" \
+                          --jq '.protection.required_status_checks.contexts[]?' 2>/dev/null || true
+                        gh api "repos/$GITHUB_REPOSITORY/rules/branches/main" \
+                          --jq '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context' 2>/dev/null || true
+                      } | sort -u)
+          if ! grep -qx gate <<<"$required"; then
+            echo "::error::#$PR waits for the maintainer: main's branch rule does not require the check gate, so a merge queued now would not wait for the build."
+            exit 1
+          fi
+          gh pr merge --auto --merge -R "$GITHUB_REPOSITORY" "$PR"

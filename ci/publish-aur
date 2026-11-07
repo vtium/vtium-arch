@@ -1,0 +1,60 @@
+#!/bin/bash
+# Publishes recipes to the AUR with aur-publish, under the SSH key in the
+# environment variable AUR_SSH_KEY. The build workflow,
+# .github/workflows/build.yml, runs it on main, after every recipe has
+# built, for each recipe whose directory the push changed.
+#
+#   AUR_SSH_KEY=... ci/publish-aur DIR...
+#
+# AUR_SSH_KEY holds a private key with no passphrase, whose public half is
+# registered with the AUR account that maintains the packages. publish-aur
+# loads it into an ssh-agent of its own and unsets the variable, so that
+# neither aur-publish nor git sees the key itself, and it prints the key's
+# fingerprint, which is no secret, so that a refused push can be compared
+# with the keys the AUR account lists.
+#
+# ssh checks the AUR's host key against ci/aur.known_hosts alone, and
+# refuses any other. The keys there are the ones whose fingerprints the AUR
+# publishes on https://aur.archlinux.org.
+#
+# The recipes go one at a time, each terminfo recipe after the others: the
+# AUR gives each package name to one AUR repository, and vtium-terminfo was
+# built by the vtium recipe before it had a recipe of its own, so vtium
+# gives up the name before vtium-terminfo takes it. publish-aur tries every
+# recipe it is given, and fails at the end if any of them failed.
+set -euo pipefail
+
+die() {
+	printf 'publish-aur: %s\n' "$*" >&2
+	exit 1
+}
+[ $# -gt 0 ] || die "usage: AUR_SSH_KEY=... ci/publish-aur DIR..."
+[ -n "${AUR_SSH_KEY-}" ] ||
+	die "AUR_SSH_KEY is unset or empty, so nothing can be pushed to the AUR; the maintainer sets it as a secret of this repository"
+top=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+cd "$top"
+known_hosts=$top/ci/aur.known_hosts
+[ -s "$known_hosts" ] || die "ci/aur.known_hosts is missing or empty"
+
+eval "$(ssh-agent -s)" >/dev/null
+trap 'ssh-agent -k >/dev/null 2>&1 || true' EXIT
+printf '%s\n' "$AUR_SSH_KEY" | ssh-add -q - 2>/dev/null ||
+	die "AUR_SSH_KEY is not a private key that ssh-add can load without a passphrase"
+unset AUR_SSH_KEY
+echo "publish-aur: offering the key $(ssh-add -l)"
+export GIT_SSH_COMMAND="ssh -o BatchMode=yes -o IdentitiesOnly=no -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$known_hosts -o GlobalKnownHostsFile=/dev/null"
+
+mapfile -t order < <(printf '%s\n' "$@" | sed 's|/$||' | sort -u | awk '/-terminfo(-git)?$/ { last[++n] = $0; next } { print } END { for (i = 1; i <= n; i++) print last[i] }')
+failed=()
+for d in "${order[@]}"; do
+	echo "::group::publish $d"
+	if ./aur-publish "$d"; then
+		echo "::endgroup::"
+	else
+		echo "::endgroup::"
+		echo "::error::aur-publish $d failed"
+		failed+=("$d")
+	fi
+done
+[ ${#failed[@]} = 0 ] || die "these recipes did not reach the AUR: ${failed[*]}"
+echo "publish-aur: published ${order[*]}"
