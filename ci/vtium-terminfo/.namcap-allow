@@ -1,0 +1,6 @@
+# vtium's terminfo entry xterm-vtium has the alias vtium, and tic writes
+# the alias as a hard link to the entry in another directory. namcap reports
+# a hard link across directories as an error, because it breaks when the two
+# directories lie on different filesystems; both lie under
+# /usr/share/terminfo, which is one directory tree on one filesystem.
+Cross-directory hardlink in package \(usr/share/terminfo/x/xterm-vtium, usr/share/terminfo/v/vtium\)$
