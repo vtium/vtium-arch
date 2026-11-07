@@ -81,12 +81,31 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git status --short
 
+      # When the open bump pull request already proposes this tag, the
+      # watcher leaves it as it is. create-pull-request would otherwise
+      # rebuild the branch from main and drop any commit the maintainer
+      # pushed onto it, such as a recipe change that must go with the new
+      # tag.
+      - name: Look for an open pull request for this tag
+        id: open
+        if: steps.up.outputs.tag
+        env:
+          GH_TOKEN: ${{ secrets.BUMP_PAT }}
+          TAG: ${{ steps.up.outputs.tag }}
+        run: |
+          open=$(gh pr list -R "$GITHUB_REPOSITORY" --head bump/vtium-release --state open \
+                   --json number,title --jq '.[] | select(.title == "vtium " + env.TAG) | .number')
+          if [ -n "$open" ]; then
+            echo "::notice::#$open already proposes vtium $TAG, so the watcher leaves it as it is."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
       # One branch for every bump: when vtium publishes another release
       # before the last bump merged, the watcher rewrites the open pull
       # request to the newer release instead of opening a second one.
       - name: Open the pull request
         id: pr
-        if: steps.up.outputs.tag
+        if: steps.up.outputs.tag && steps.open.outputs.skip != 'true'
         uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.BUMP_PAT }}
@@ -117,8 +136,14 @@ jobs:
               exit 0
             fi
           done
+          # Classic branch protection shows in the branch itself, which any
+          # token that reads the repository can see, and in its protection
+          # endpoint, which needs a token that may read the repository's
+          # administration. Rulesets show in the rules endpoint.
           required=$( { gh api "repos/$GITHUB_REPOSITORY/branches/main" \
                           --jq '.protection.required_status_checks.contexts[]?' 2>/dev/null || true
+                        gh api "repos/$GITHUB_REPOSITORY/branches/main/protection/required_status_checks" \
+                          --jq '.contexts[]?, .checks[]?.context' 2>/dev/null || true
                         gh api "repos/$GITHUB_REPOSITORY/rules/branches/main" \
                           --jq '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context' 2>/dev/null || true
                       } | sort -u)
