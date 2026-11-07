@@ -9,11 +9,16 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      create:
+        description: Recipes to create on the AUR, which has no repository for them yet, separated by spaces (on main only)
+        required: false
+        default: ''
 
 # A newer push to a pull request cancels the build of the older one. Runs on
-# main never share a group, because each one publishes the recipes its own
-# push changed, and a run that GitHub cancelled or dropped would leave them
-# unpublished.
+# main never cancel each other. The job publish compares every recipe with
+# the AUR, so a run on main that GitHub dropped, or whose gate failed, leaves
+# nothing unpublished once a later run on main passes.
 concurrency:
   group: build-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
@@ -29,7 +34,7 @@ jobs:
     outputs:
       recipes: ${{ steps.list.outputs.recipes }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - id: list
         run: |
           recipes=$(for f in */PKGBUILD; do echo "${f%/PKGBUILD}"; done | LC_ALL=C sort | jq -R . | jq -sc .)
@@ -52,7 +57,7 @@ jobs:
       - name: Install the tools
         run: pacman -Syu --noconfirm --needed git namcap
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       # makepkg refuses to run as root, which the container's user is, and
       # makepkg -s installs dependencies through sudo.
@@ -80,7 +85,7 @@ jobs:
 
       # aur-publish splits each recipe's history out of the repository, and
       # the test scripts clone it, so the checkout carries the whole history.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
 
@@ -115,6 +120,9 @@ jobs:
       - name: test-bump-release
         run: sudo -u builder ./test-bump-release
 
+      - name: test-publish-aur
+        run: sudo -u builder ./test-publish-aur
+
   # One check whose name stays the same as recipes come and go, so that
   # main's branch rule can require it: gate passes only when every recipe
   # built and every check passed. A cancelled or skipped job fails it too.
@@ -131,12 +139,16 @@ jobs:
           test "${{ needs.build.result }}" = success
           test "${{ needs.check.result }}" = success
 
-  # On main, after the gate, each recipe whose directory the push changed
-  # goes to the AUR (ci/publish-aur). One run publishes at a time, so two
-  # merges a minute apart never push to one AUR repository at once.
+  # On main, after the gate, ci/publish-aur compares every recipe with its
+  # AUR repository and publishes each one the AUR is behind on, so a later
+  # run publishes what an earlier one missed. A recipe the AUR has no
+  # repository for is created only when the push changed its directory, or
+  # when someone names it in the input create. One run publishes at a time,
+  # so two runs never push to one AUR repository at once; GitHub may drop a
+  # waiting run, and the next run publishes what it would have.
   publish:
     needs: gate
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     concurrency:
       group: publish-aur
       cancel-in-progress: false
@@ -149,14 +161,14 @@ jobs:
           AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
         run: |
           test -n "$AUR_SSH_KEY" || {
-            echo "::error::AUR_SSH_KEY is unset, so this run cannot publish the recipes it changed to the AUR."
+            echo "::error::AUR_SSH_KEY is unset, so this run cannot publish to the AUR."
             exit 1
           }
 
       - name: Install the tools
         run: pacman -Syu --noconfirm --needed git openssh
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
 
@@ -165,27 +177,33 @@ jobs:
           useradd -m builder
           chown -R builder:builder "$GITHUB_WORKSPACE"
 
-      - name: Find the recipes the push changed
-        id: changed
+      # The recipes this run may create on the AUR: those whose directory the
+      # push changed, or those named in the input create.
+      - name: Find the recipes this run may create
+        id: new
         env:
+          EVENT: ${{ github.event_name }}
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.sha }}
+          CREATE: ${{ inputs.create }}
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git cat-file -e "$BEFORE^{commit}" 2>/dev/null || {
-            echo "::error::the commit $BEFORE that main held before this push is not in the repository, so this run cannot tell which recipes changed; publish them with ./aur-publish by hand"
-            exit 1
-          }
-          recipes=$(git diff --name-only "$BEFORE" "$AFTER" | grep / | cut -d/ -f1 | sort -u \
-                    | while read -r d; do [ -f "$d/PKGBUILD" ] && echo "$d"; done | tr '\n' ' ')
+          if [ "$EVENT" = workflow_dispatch ]; then
+            recipes=$CREATE
+          elif git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            recipes=$(git diff --name-only "$BEFORE" "$AFTER" | grep / | cut -d/ -f1 | sort -u \
+                      | while read -r d; do [ -f "$d/PKGBUILD" ] && echo "$d"; done | tr '\n' ' ')
+          else
+            echo "::warning::The commit $BEFORE that main held before this push is not in the repository, so this run creates no AUR repository; start the workflow by hand with the input create to create one."
+            recipes=
+          fi
           echo "recipes=$recipes" >> "$GITHUB_OUTPUT"
-          echo "the push changed these recipes: ${recipes:-none}"
+          echo "this run may create: ${recipes:-none}"
 
       - name: Publish to the AUR
-        if: steps.changed.outputs.recipes != ''
         env:
           AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
-          RECIPES: ${{ steps.changed.outputs.recipes }}
+          NEW: ${{ steps.new.outputs.recipes }}
         run: |
-          # shellcheck disable=SC2086 # RECIPES is a list of directory names
-          sudo -u builder --preserve-env=AUR_SSH_KEY ci/publish-aur $RECIPES
+          # shellcheck disable=SC2086 # NEW is a list of directory names
+          sudo -u builder --preserve-env=AUR_SSH_KEY ci/publish-aur $NEW
