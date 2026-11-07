@@ -1,0 +1,190 @@
+#!/bin/bash
+# Tests bump-release in a scratch clone of this repository, with stand-in
+# answers from GitHub's API, and changes nothing here and asks GitHub
+# nothing.
+#
+#   ./test-bump-release
+
+# Each case reads "CONDITION && ok || fail": ok only prints, so fail runs
+# exactly when CONDITION fails. The backquotes in single quotes are
+# Markdown's, not the shell's.
+# shellcheck disable=SC2015,SC2016
+set -euo pipefail
+
+here=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+tmp=$(mktemp -d)
+trap 'rm -rf -- "$tmp"' EXIT
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com
+export GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
+unset VTIUM_GIT_URL VTIUM_GIT_BRANCH VTIUM_FEATURES GH_TOKEN
+
+fails=0
+ok() { echo "ok   $1"; }
+fail() {
+	echo "FAIL $1: $2"
+	fails=$((fails + 1))
+}
+
+release_recipes=(vtium vtium-minspec vtium-minspec-gpu vtium-terminfo)
+
+# The clone, with the working copy's bump-release committed in it, so a
+# change to the script is tested before it is committed.
+git clone -q "$here" "$tmp/clone"
+cd "$tmp/clone"
+cp "$here/bump-release" bump-release
+git add bump-release
+git commit -q --allow-empty -m "the bump-release under test"
+base=$(git rev-parse HEAD)
+start=$(sed -n 's/^_tag=//p' vtium/PKGBUILD)
+start_pkgver=$(./bump-release pkgver "$start")
+
+# api FILE RELEASE...: a stand-in API answer in FILE, one release for each
+# RELEASE, written as TAG or TAG:pre or TAG:draft.
+api() {
+	local file=$1 r tag kind pre draft sep=
+	shift
+	{
+		printf '['
+		for r in "$@"; do
+			tag=${r%%:*} kind=
+			[ "$tag" = "$r" ] || kind=${r#*:}
+			pre=false draft=false
+			[ "$kind" = pre ] && pre=true
+			[ "$kind" = draft ] && draft=true
+			printf '%s{"tag_name":"%s","prerelease":%s,"draft":%s,"html_url":"https://github.com/vtium/vtium/releases/tag/%s"}' \
+				"$sep" "$tag" "$pre" "$draft" "$tag"
+			sep=,
+		done
+		printf ']\n'
+	} >"$file"
+}
+# run FILE: bump-release's output with FILE as the API's answer, in a clone
+# reset to where it started.
+run() {
+	git reset -q --hard "$base"
+	git clean -qfdx
+	VTIUM_RELEASES_JSON=$1 ./bump-release
+}
+# unchanged CASE OUT: the run printed nothing and changed nothing.
+unchanged() {
+	if [ -n "$2" ]; then
+		fail "$1" "it printed: $2"
+	elif [ -n "$(git status --porcelain)" ]; then
+		fail "$1" "it changed: $(git status --porcelain | tr '\n' ' ')"
+	else
+		ok "$1"
+	fi
+}
+
+# The pkgver of a tag.
+for pair in v0.1.0-alpha.6=0.1.0alpha.6 v0.1.0=0.1.0 v0.2.0-beta.1=0.2.0beta.1 v1.2.3-rc.10=1.2.3rc.10; do
+	tag=${pair%%=*} want=${pair#*=}
+	got=$(./bump-release pkgver "$tag" 2>&1) || true
+	[ "$got" = "$want" ] && ok "the pkgver of $tag is $want" || fail "the pkgver of $tag" "got '$got', wanted '$want'"
+done
+for tag in 0.1.0 v0.1.0-1 v0.1.0-rc-1 v0.1.0+build v0.1.0-alpha/6 vX; do
+	if ./bump-release pkgver "$tag" >/dev/null 2>&1; then
+		fail "the tag $tag is refused" "it was given a pkgver"
+	else
+		ok "the tag $tag is refused"
+	fi
+done
+
+# The same release as the recipes build, and an older one: nothing to do.
+api "$tmp/same.json" "$start:pre" v0.1.0-alpha.1:pre
+unchanged "the release the recipes build changes nothing" "$(run "$tmp/same.json")"
+api "$tmp/older.json" v0.1.0-alpha.1:pre v0.0.9
+unchanged "an older release changes nothing" "$(run "$tmp/older.json")"
+api "$tmp/empty.json"
+unchanged "no release at all changes nothing" "$(run "$tmp/empty.json")"
+
+# A draft is passed over, however new.
+api "$tmp/draft.json" v9.0.0:draft "$start:pre"
+unchanged "a draft release changes nothing" "$(run "$tmp/draft.json")"
+
+# A newer pre-release moves all four release recipes and the README.
+new=v0.1.0-alpha.6 new_pkgver=0.1.0alpha.6
+api "$tmp/newer.json" "$new:pre" "$start:pre" v0.1.0-alpha.1:pre
+out=$(run "$tmp/newer.json")
+want="current=$start
+tag=$new
+pkgver=$new_pkgver
+prerelease=true
+url=https://github.com/vtium/vtium/releases/tag/$new
+recipes=${release_recipes[*]}"
+[ "$out" = "$want" ] && ok "a newer pre-release prints the move" || fail "a newer pre-release prints the move" "got: $out"
+for r in "${release_recipes[@]}"; do
+	got="$(sed -n 's/^_tag=//p' "$r/PKGBUILD") $(sed -n 's/^pkgver=//p' "$r/PKGBUILD") $(sed -n 's/^pkgrel=//p' "$r/PKGBUILD")"
+	[ "$got" = "$new $new_pkgver 1" ] && ok "$r builds $new as $new_pkgver-1" || fail "$r builds $new as $new_pkgver-1" "it reads _tag, pkgver, pkgrel: $got"
+	srcinfo=$(cd "$r" && makepkg --printsrcinfo)
+	[ "$srcinfo" = "$(cat "$r/.SRCINFO")" ] && ok "$r/.SRCINFO is what makepkg --printsrcinfo prints" || fail "$r/.SRCINFO" "it is not what makepkg --printsrcinfo prints"
+	grep -qxF "	source = vtium::git+https://github.com/vtium/vtium.git#tag=$new?signed" "$r/.SRCINFO" &&
+		ok "$r/.SRCINFO builds from the signed tag $new" || fail "$r/.SRCINFO builds from the signed tag $new" "no such source line"
+	grep -q "^pkgrel=" "$r/PKGBUILD" || fail "$r keeps its pkgrel line" "it has none"
+done
+grep -qF "| a release: the tag \`$new\`, checked against the maintainer's signature |" README.md &&
+	ok "the README's table names $new" || fail "the README's table names $new" "$(grep -F '| `vtium/` |' README.md)"
+changed=$(git status --porcelain | awk '{ print $2 }' | sort | tr '\n' ' ')
+want_changed=$(for r in "${release_recipes[@]}"; do printf '%s/.SRCINFO\n%s/PKGBUILD\n' "$r" "$r"; done | { cat; echo README.md; } | sort | tr '\n' ' ')
+[ "$changed" = "$want_changed" ] && ok "the bump changes the four recipes and the README alone" || fail "the bump changes the four recipes and the README alone" "it changed: $changed"
+diffstat=$(git diff --numstat -- README.md | awk '{ print $1 " " $2 }')
+[ "$diffstat" = "1 1" ] && ok "the bump changes one line of the README" || fail "the bump changes one line of the README" "git diff --numstat reads $diffstat"
+
+# Run again on the bumped tree: nothing more to do.
+git add -A
+git commit -q -m "the bump"
+out=$(VTIUM_RELEASES_JSON=$tmp/newer.json ./bump-release)
+[ -z "$out" ] && [ -z "$(git status --porcelain)" ] && ok "a second run changes nothing" || fail "a second run changes nothing" "it printed '$out'"
+
+# The newest release wins by vercmp, not by its place in the list: 0.1.0
+# sorts after 0.1.0rc.1, and alpha.10 after alpha.9.
+api "$tmp/final.json" v0.1.0-rc.1:pre v0.1.0 v0.1.0-alpha.9:pre
+out=$(run "$tmp/final.json")
+grep -qx 'tag=v0.1.0' <<<"$out" && grep -qx 'prerelease=false' <<<"$out" && grep -qx '^pkgver=0.1.0$' <<<"$out" &&
+	ok "a release sorts after its own pre-releases" || fail "a release sorts after its own pre-releases" "got: $out"
+api "$tmp/ten.json" v0.1.0-alpha.9:pre v0.1.0-alpha.10:pre
+out=$(run "$tmp/ten.json")
+grep -qx 'tag=v0.1.0-alpha.10' <<<"$out" && ok "alpha.10 sorts after alpha.9" || fail "alpha.10 sorts after alpha.9" "got: $out"
+
+# A release whose tag has another form is passed over.
+api "$tmp/odd.json" release-2 "$start:pre"
+unchanged "a tag of another form is passed over" "$(run "$tmp/odd.json" 2>/dev/null)"
+
+# With the setting turned to no, only a release that is not a pre-release
+# moves the recipes.
+git reset -q --hard "$base"
+sed -i 's/^include_prereleases=yes$/include_prereleases=no/' bump-release
+grep -qx 'include_prereleases=no' bump-release || fail "the setting include_prereleases" "bump-release has no line include_prereleases=yes"
+git commit -q -am "releases only"
+out=$(VTIUM_RELEASES_JSON=$tmp/newer.json ./bump-release)
+[ -z "$out" ] && [ -z "$(git status --porcelain)" ] && ok "with include_prereleases=no, a pre-release changes nothing" ||
+	fail "with include_prereleases=no, a pre-release changes nothing" "it printed '$out'"
+out=$(VTIUM_RELEASES_JSON=$tmp/final.json ./bump-release)
+grep -qx 'tag=v0.1.0' <<<"$out" && ok "with include_prereleases=no, a release moves the recipes" ||
+	fail "with include_prereleases=no, a release moves the recipes" "got: $out"
+
+# Recipes that disagree about the tag are refused, and so is a pkgver that
+# does not follow the tag.
+git reset -q --hard "$base"
+sed -i "s/^_tag=.*/_tag=v0.1.0-alpha.4/" vtium-terminfo/PKGBUILD
+err=$(VTIUM_RELEASES_JSON=$tmp/newer.json ./bump-release 2>&1) && fail "recipes that build different tags are refused" "it passed" ||
+	{ grep -qF "the release recipes must build the same tag" <<<"$err" && ok "recipes that build different tags are refused" || fail "recipes that build different tags are refused" "got: $err"; }
+git checkout -q vtium-terminfo/PKGBUILD
+sed -i "s/^pkgver=.*/pkgver=$start_pkgver.1/" vtium-minspec/PKGBUILD
+err=$(VTIUM_RELEASES_JSON=$tmp/newer.json ./bump-release 2>&1) && fail "a pkgver that does not follow the tag is refused" "it passed" ||
+	{ grep -qF "so its pkgver must be $start_pkgver" <<<"$err" && ok "a pkgver that does not follow the tag is refused" || fail "a pkgver that does not follow the tag is refused" "got: $err"; }
+git checkout -q vtium-minspec/PKGBUILD
+
+# A README whose table has lost the row is refused.
+sed -i '/^| `vtium\/` |/d' README.md
+git commit -q -am "no row for vtium/"
+err=$(VTIUM_RELEASES_JSON=$tmp/newer.json ./bump-release 2>&1) && fail "a README without the row for vtium/ is refused" "it passed" ||
+	{ grep -qF "README.md has no row for vtium/" <<<"$err" && ok "a README without the row for vtium/ is refused" || fail "a README without the row for vtium/ is refused" "got: $err"; }
+
+if [ "$fails" = 0 ]; then
+	echo "test-bump-release: every case passed"
+else
+	echo "test-bump-release: $fails case(s) failed" >&2
+	exit 1
+fi
