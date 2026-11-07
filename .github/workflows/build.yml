@@ -9,11 +9,6 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      create:
-        description: Recipes to create on the AUR, which has no repository for them yet, separated by spaces (on main only)
-        required: false
-        default: ''
 
 # A newer push to a pull request cancels the build of the older one. Runs on
 # main never cancel each other. The job publish compares every recipe with
@@ -139,13 +134,13 @@ jobs:
           test "${{ needs.build.result }}" = success
           test "${{ needs.check.result }}" = success
 
-  # On main, after the gate, ci/publish-aur compares every recipe with its
-  # AUR repository and publishes each one the AUR is behind on, so a later
-  # run publishes what an earlier one missed. A recipe the AUR has no
-  # repository for is created only when the push changed its directory, or
-  # when someone names it in the input create. One run publishes at a time,
-  # so two runs never push to one AUR repository at once; GitHub may drop a
-  # waiting run, and the next run publishes what it would have.
+  # On main, after the gate, ci/publish-aur compares every recipe that
+  # ci/unpublished does not name with its AUR repository, and publishes each
+  # one the AUR is behind on or does not have yet, the consoles first. A
+  # later run therefore publishes what an earlier one missed. One run
+  # publishes at a time, so two runs never push to one AUR repository at
+  # once; GitHub may drop a waiting run, and the next run publishes what it
+  # would have.
   publish:
     needs: gate
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
@@ -177,33 +172,7 @@ jobs:
           useradd -m builder
           chown -R builder:builder "$GITHUB_WORKSPACE"
 
-      # The recipes this run may create on the AUR: those whose directory the
-      # push changed, or those named in the input create.
-      - name: Find the recipes this run may create
-        id: new
-        env:
-          EVENT: ${{ github.event_name }}
-          BEFORE: ${{ github.event.before }}
-          AFTER: ${{ github.sha }}
-          CREATE: ${{ inputs.create }}
-        run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          if [ "$EVENT" = workflow_dispatch ]; then
-            recipes=$CREATE
-          elif git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            recipes=$(git diff --name-only "$BEFORE" "$AFTER" | grep / | cut -d/ -f1 | sort -u \
-                      | while read -r d; do [ -f "$d/PKGBUILD" ] && echo "$d"; done | tr '\n' ' ')
-          else
-            echo "::warning::The commit $BEFORE that main held before this push is not in the repository, so this run creates no AUR repository; start the workflow by hand with the input create to create one."
-            recipes=
-          fi
-          echo "recipes=$recipes" >> "$GITHUB_OUTPUT"
-          echo "this run may create: ${recipes:-none}"
-
       - name: Publish to the AUR
         env:
           AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
-          NEW: ${{ steps.new.outputs.recipes }}
-        run: |
-          # shellcheck disable=SC2086 # NEW is a list of directory names
-          sudo -u builder --preserve-env=AUR_SSH_KEY ci/publish-aur $NEW
+        run: sudo -u builder --preserve-env=AUR_SSH_KEY ci/publish-aur

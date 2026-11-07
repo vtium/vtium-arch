@@ -6,8 +6,8 @@
 #   ./test-publish-aur
 #
 # Each stand-in is a bare repository that holds what the AUR would hold for
-# one recipe: the recipe's whole history (up to date), its history but for
-# the last commit (behind), a commit of its own (diverged), or nothing,
+# one recipe: the recipe's whole history (same), its history but for the
+# last commit (behind), a commit of its own (diverged), or nothing (empty),
 # which is how the AUR answers for a repository it does not have.
 #
 # Each case reads "CONDITION && ok || fail": ok only prints, so fail runs
@@ -30,61 +30,96 @@ fail() {
 	fails=$((fails + 1))
 }
 
-# The clone, with the working copy's publish-aur committed in it, so a
-# change to the script is tested before it is committed.
+# The clone, with the working copy's publish-aur and ci/unpublished
+# committed in it, so a change to either is tested before it is committed.
 git clone -q "$here" "$tmp/clone"
 cd "$tmp/clone"
-cp "$here/ci/publish-aur" ci/publish-aur
-git commit -q --allow-empty -am "the publish-aur under test"
+cp "$here/ci/publish-aur" "$here/ci/unpublished" ci/
+git add ci/publish-aur ci/unpublished
+git commit -q --allow-empty -m "the publish-aur under test"
 
-# stand DIR KIND: the stand-in AUR repository of DIR.
-stand() {
-	local d=$1 kind=$2 split
-	git init -q --bare "$tmp/aur/$d.git"
-	split=$(git subtree split --prefix "$d" HEAD 2>/dev/null)
-	case $kind in
-	same) git push -q "$tmp/aur/$d.git" "$split:refs/heads/master" ;;
-	behind) git push -q "$tmp/aur/$d.git" "$split~1:refs/heads/master" ;;
-	diverged)
-		git init -q "$tmp/other-$d"
-		git -C "$tmp/other-$d" commit -q --allow-empty -m "a commit only the AUR has"
-		git -C "$tmp/other-$d" push -q "$tmp/aur/$d.git" HEAD:refs/heads/master
-		;;
-	empty) ;;
-	esac
+# aur KIND...: stand-in AUR repositories, one KIND for each recipe in the
+# order of recipes below, replacing those of the last call.
+recipes=(vtium vtium-git vtium-terminfo vtium-terminfo-git vtium-fonts vtium-minspec vtium-minspec-git vtium-minspec-gpu vtium-minspec-gpu-git)
+aur() {
+	local i d kind split
+	rm -rf "${tmp:?}/aur"
+	for i in "${!recipes[@]}"; do
+		d=${recipes[$i]}
+		kind=${*:$((i + 1)):1}
+		git init -q --bare "$tmp/aur/$d.git"
+		split=$(git subtree split --prefix "$d" HEAD 2>/dev/null)
+		case $kind in
+		same) git push -q "$tmp/aur/$d.git" "$split:refs/heads/master" ;;
+		behind) git push -q "$tmp/aur/$d.git" "$split~1:refs/heads/master" ;;
+		diverged)
+			rm -rf "$tmp/other"
+			git init -q "$tmp/other"
+			git -C "$tmp/other" commit -q --allow-empty -m "a commit only the AUR has"
+			git -C "$tmp/other" push -q "$tmp/aur/$d.git" HEAD:refs/heads/master
+			;;
+		empty) ;;
+		*) echo "aur: no kind for $d" >&2; exit 2 ;;
+		esac
+	done
 }
-stand vtium same
-stand vtium-git behind
-stand vtium-minspec diverged
-stand vtium-minspec-git empty
-stand vtium-terminfo empty
-stand vtium-terminfo-git behind
-for f in */PKGBUILD; do
-	d=${f%/PKGBUILD}
-	[ -d "$tmp/aur/$d.git" ] || stand "$d" same
+# run: publish-aur --dry-run against the stand-ins, into out and code.
+run() {
+	code=0
+	out=$(PUBLISH_AUR_REMOTE="file://$tmp/aur/%s.git" ci/publish-aur --dry-run 2>&1) || code=$?
+}
+has() { grep -qF -- "$1" <<<"$out"; }
+pushes() { grep -oE 'git push ssh://aur@aur.archlinux.org/[a-z-]+\.git' <<<"$out" | sed 's|.*/||; s|\.git$||' | tr '\n' ' '; }
+
+# The first publish, as the AUR stands today: vtium and vtium-git exist in
+# the old layout, and nothing else does.
+#   vtium vtium-git terminfo terminfo-git fonts minspec x4
+aur behind behind empty empty empty empty empty empty empty
+run
+[ "$code" = 0 ] && ok "the first publish passes" || fail "the first publish passes" "exit $code: $out"
+[ "$(pushes)" = "vtium vtium-git vtium-fonts vtium-terminfo vtium-terminfo-git " ] &&
+	ok "the first publish pushes the consoles, then vtium-fonts and the terminfo recipes" ||
+	fail "the first publish pushes the consoles, then vtium-fonts and the terminfo recipes" "the pushes go in the order $(pushes)"
+has "publish-aur: vtium-terminfo has no AUR repository yet, and its first push creates it." &&
+	ok "a recipe with no AUR repository is created" || fail "a recipe with no AUR repository is created" "$out"
+for d in vtium-minspec vtium-minspec-git vtium-minspec-gpu vtium-minspec-gpu-git; do
+	has "publish-aur: $d is never published; ci/unpublished names it." && ! has "aur@aur.archlinux.org/$d.git" &&
+		ok "$d, which ci/unpublished names, is never published" || fail "$d, which ci/unpublished names, is never published" "$out"
 done
 
-code=0
-out=$(PUBLISH_AUR_REMOTE="file://$tmp/aur/%s.git" ci/publish-aur --dry-run vtium-terminfo 2>&1) || code=$?
-has() { grep -qF -- "$1" <<<"$out"; }
+# Up to date everywhere: nothing to push.
+aur same same same same same empty empty empty empty
+run
+[ "$code" = 0 ] && [ -z "$(pushes)" ] && has "publish-aur: vtium is up to date on the AUR" &&
+	ok "an up-to-date AUR gets no push" || fail "an up-to-date AUR gets no push" "exit $code, pushes $(pushes)"
 
-[ "$code" = 0 ] && ok "a run whose AUR history differs for one recipe still passes" || fail "a run whose AUR history differs for one recipe still passes" "exit $code"
-has "publish-aur: vtium is up to date on the AUR" && ! grep -qxF '::group::aur-publish --dry-run vtium' <<<"$out" &&
-	ok "an up-to-date recipe is not published" || fail "an up-to-date recipe is not published" "$out"
-has "publish-aur: vtium-git moves on the AUR from" && has "git push ssh://aur@aur.archlinux.org/vtium-git.git" &&
-	ok "a recipe the AUR is behind on is published" || fail "a recipe the AUR is behind on is published" "$out"
-has "::warning::The AUR repository vtium-minspec holds commits" && ! has "git push ssh://aur@aur.archlinux.org/vtium-minspec.git" &&
-	ok "a recipe whose AUR history differs is skipped with a warning" || fail "a recipe whose AUR history differs is skipped with a warning" "$out"
-has "publish-aur: vtium-minspec-git has no AUR repository yet; a run creates it once" && ! has "git push ssh://aur@aur.archlinux.org/vtium-minspec-git.git" &&
-	ok "a recipe with no AUR repository, not named, is not published" || fail "a recipe with no AUR repository, not named, is not published" "$out"
-has "publish-aur: vtium-terminfo has no AUR repository yet, and this run creates it." && has "git push ssh://aur@aur.archlinux.org/vtium-terminfo.git" &&
-	ok "a recipe with no AUR repository, named, is published" || fail "a recipe with no AUR repository, named, is published" "$out"
-order=$(grep -oE 'git push ssh://aur@aur.archlinux.org/[a-z-]+\.git' <<<"$out" | sed 's|.*/||; s|\.git$||' | tr '\n' ' ')
-[ "$order" = "vtium-git vtium-terminfo vtium-terminfo-git " ] && ok "the terminfo recipes go last" || fail "the terminfo recipes go last" "the pushes go in the order $order"
-has "publish-aur: would publish: vtium-git vtium-terminfo vtium-terminfo-git; AUR history differs: vtium-minspec; failed: none." &&
-	ok "the summary names what it publishes and what it skips" || fail "the summary names what it publishes and what it skips" "$out"
+# A recipe whose AUR history differs, with nothing depending on it, is
+# skipped with a warning, and the run passes.
+aur same behind same same diverged empty empty empty empty
+run
+[ "$code" = 0 ] && [ "$(pushes)" = "vtium-git " ] && has "::warning::The AUR repository vtium-fonts holds commits" &&
+	ok "a diverged recipe is skipped with a warning while the others go" || fail "a diverged recipe is skipped with a warning while the others go" "exit $code, pushes $(pushes): $out"
+
+# A console whose terminfo recipe cannot follow it is held back, and the run
+# fails.
+aur same behind same diverged same empty empty empty empty
+run
+[ "$code" != 0 ] && [ -z "$(pushes)" ] && has "::error::publish-aur holds vtium-git back, because it depends on vtium-terminfo-git (diverged)" &&
+	ok "a console whose terminfo recipe cannot follow is held back, and the run fails" ||
+	fail "a console whose terminfo recipe cannot follow is held back, and the run fails" "exit $code, pushes $(pushes): $out"
+
+# A terminfo push that fails after its console went fails the run, naming
+# the gap. aur-publish refuses a recipe with a change that is not committed.
+aur same behind same behind same empty empty empty empty
+echo "# not committed" >>vtium-terminfo-git/PKGBUILD
+run
+git checkout -q vtium-terminfo-git/PKGBUILD
+[ "$code" != 0 ] && [ "$(pushes)" = "vtium-git " ] && has "::error::vtium-git reached the AUR, but its dependency vtium-terminfo-git did not" &&
+	ok "a console that went without its terminfo recipe fails the run" ||
+	fail "a console that went without its terminfo recipe fails the run" "exit $code, pushes $(pushes): $out"
 
 # Without --dry-run, a run that has something to push needs the key.
+aur behind same same same same empty empty empty empty
 code=0
 err=$(PUBLISH_AUR_REMOTE="file://$tmp/aur/%s.git" ci/publish-aur 2>&1) || code=$?
 [ "$code" != 0 ] && grep -qF "AUR_SSH_KEY is unset or empty" <<<"$err" &&

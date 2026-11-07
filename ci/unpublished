@@ -1,0 +1,11 @@
+# The recipes that ci/publish-aur never publishes to the AUR, one directory
+# to a line. The build workflow still builds and checks each of them.
+#
+# The maintainer decided that the minspec consoles are build options of the
+# vtium recipe rather than packages of their own: VTIUM_FEATURES= makepkg in
+# vtium/ builds the minspec console, and VTIUM_FEATURES=gpu makepkg the
+# minspec console with the GPU path.
+vtium-minspec
+vtium-minspec-git
+vtium-minspec-gpu
+vtium-minspec-gpu-git

@@ -1,6 +1,6 @@
 # VTium for Arch Linux
 
-This repository is the Arch Linux packaging of [vtium](https://github.com/vtium/vtium), a terminal for the Linux console that draws through KMS/DRM. Each directory holds one recipe, a `PKGBUILD` and the files beside it, and is published as the AUR (Arch User Repository) package of the same name. vtium keeps this repository as its submodule `packaging/arch`. vtium's [docs/install.md](https://github.com/vtium/vtium/blob/main/docs/install.md) says how to install the packages and give vtium a VT, and the comments in each `PKGBUILD` say what the package installs and how it builds.
+This repository is the Arch Linux packaging of [vtium](https://github.com/vtium/vtium), a terminal for the Linux console that draws through KMS/DRM. Each directory holds one recipe, a `PKGBUILD` and the files beside it. Five of them are published on the AUR (Arch User Repository), each as the package of the same name: `vtium`, `vtium-git`, `vtium-terminfo`, `vtium-terminfo-git` and `vtium-fonts`. vtium keeps this repository as its submodule `packaging/arch`. vtium's [docs/install.md](https://github.com/vtium/vtium/blob/main/docs/install.md) says how to install the packages and give vtium a VT, and the comments in each `PKGBUILD` say what the package installs and how it builds.
 
 ## The recipes
 
@@ -14,13 +14,15 @@ This repository is the Arch Linux packaging of [vtium](https://github.com/vtium/
 | `vtium-minspec-gpu-git/` | the same console | the tip of `main` |
 | `vtium-terminfo/` | vtium's terminfo entry `xterm-vtium`, which each console built from a release depends on | the same release tag |
 | `vtium-terminfo-git/` | the same entry, for the `-git` consoles | the tip of `main` |
-| `vtium-fonts/` | no file of its own: it depends on the fonts that vtium's shipped font sets name | this repository |
+| `vtium-fonts/` | a curated set of fonts chosen to go with vtium's frits (font set files), which grows as new frits are added; it installs no font itself and depends on the distribution's font packages | this repository |
+
+The four minspec recipes are never published on the AUR, because they are build options of `vtium` rather than packages of their own. `ci/unpublished` names them, and the build still builds and checks them. In `vtium/`, `VTIUM_FEATURES= makepkg` builds the minspec console and `VTIUM_FEATURES=gpu makepkg` the minspec console with the GPU path, each with the `vtium` recipe's dependencies, frits and build settings.
 
 The maintainer signs each release tag, and makepkg refuses to build a release recipe until the tag's signature checks out against the key in `validpgpkeys`. Each release recipe carries that key in `keys/pgp/`, so import it once with `gpg --import vtium/keys/pgp/*.asc`. A release recipe's `pkgver` is its tag without the `v` and without the hyphen before a pre-release, so `v0.1.0-alpha.6` is `0.1.0alpha.6`, which pacman sorts before `0.1.0`.
 
 ## How a new release reaches the AUR
 
-The watcher, `.github/workflows/update.yml`, looks for a new vtium release every day, and at once when vtium sends this repository a `repository_dispatch` event of type `vtium-release`. When vtium has published a release newer than the tag the release recipes build, `./bump-release` moves `vtium`, `vtium-minspec`, `vtium-minspec-gpu` and `vtium-terminfo` to that tag together, and the watcher opens a pull request from the branch `bump/vtium-release` and queues it to merge. It takes pre-releases too, while `bump-release` sets `include_prereleases=yes`. The build, `.github/workflows/build.yml`, builds every recipe in a clean Arch container for each pull request, lints the packages with namcap, and runs `aur-publish --dry-run` and the tests. Its check `gate`, which main's branch rule requires, lets the pull request merge. On main, the build's job `publish` compares each recipe with its AUR repository and runs `aur-publish` for each one the AUR is behind on, so a run publishes what an earlier run missed. It creates an AUR repository only for a recipe whose directory the push changed, or that someone names in the input `create` when starting the build by hand. The watcher needs the secret `BUMP_PAT` and publishing needs the secret `AUR_SSH_KEY`, and each job stops with an error when its secret is missing.
+The watcher, `.github/workflows/update.yml`, looks for a new vtium release every day, and at once when vtium sends this repository a `repository_dispatch` event of type `vtium-release`. When vtium has published a release newer than the tag the release recipes build, `./bump-release` moves `vtium`, `vtium-minspec`, `vtium-minspec-gpu` and `vtium-terminfo` to that tag together, and the watcher opens a pull request from the branch `bump/vtium-release` and queues it to merge. It takes pre-releases too, while `bump-release` sets `include_prereleases=yes`. The build, `.github/workflows/build.yml`, builds every recipe in a clean Arch container for each pull request, lints the packages with namcap, and runs `aur-publish --dry-run` and the tests. Its check `gate`, which main's branch rule requires, lets the pull request merge. On main, the build's job `publish` compares each published recipe with its AUR repository and runs `aur-publish` for each one the AUR is behind on or does not have yet, so a run publishes what an earlier run missed. The consoles go first and `vtium-fonts` and the terminfo recipes after them, and `publish` pushes no console whose terminfo recipe cannot follow it in the same run. The watcher needs the secret `BUMP_PAT` and publishing needs the secret `AUR_SSH_KEY`, and each job stops with an error when its secret is missing.
 
 To hold a bump for review, add an empty file `ci/<recipe>/.no-auto-merge`: the watcher still opens the pull request, which then waits for the maintainer to merge it. The watcher turns off the auto-merge of a held pull request, and it leaves an open bump pull request alone when it already proposes the newest tag or carries a commit the watcher did not write, so a commit pushed onto it stays. `ci/vtium/.no-auto-merge` holds the move to `v0.1.0-alpha.6` until a person adds `vtium`'s new features and `hwaccel` on to that pull request, as the file says. The files that only CI reads live under `ci/`, because `aur-publish` pushes a recipe's whole directory to the AUR.
 
@@ -31,7 +33,7 @@ To hold a bump for review, add an empty file `ci/<recipe>/.no-auto-merge`: the w
 ```sh
 ./aur-publish --dry-run vtium-git   # runs every check and prints the push
 ./aur-publish vtium-git             # pushes
-./test-aur-publish && ./test-install-messages && ./test-bump-release
+./test-aur-publish && ./test-install-messages && ./test-bump-release && ./test-publish-aur
 ```
 
 Before you commit a change to a `PKGBUILD`, make its `.SRCINFO` again with the build variables unset: `env -u VTIUM_GIT_URL -u VTIUM_GIT_BRANCH -u VTIUM_FEATURES makepkg --printsrcinfo > .SRCINFO`.
