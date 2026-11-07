@@ -7,7 +7,7 @@ This repository is the Arch Linux packaging of [vtium](https://github.com/vtium/
 | Directory | What it builds | What it builds from |
 |---|---|---|
 | `vtium/` | the console for a desktop or laptop, with the features `images logind gpu` and the GPU path off by default | a release: the tag `v0.1.0-alpha.5`, checked against the maintainer's signature |
-| `vtium-git/` | the same console | the tip of vtium's `main` |
+| `vtium-git/` | the same console with the feature `bidi` too, for right-to-left text, and the GPU path on by default; `vtium` builds it that way from `v0.1.0-alpha.6` on | the tip of vtium's `main` |
 | `vtium-minspec/` | vtium's smallest console, with no feature | the same release tag |
 | `vtium-minspec-git/` | the same console | the tip of `main` |
 | `vtium-minspec-gpu/` | the smallest console with the feature `gpu`, and the GPU path off by default | the same release tag |
@@ -22,7 +22,7 @@ The maintainer signs each release tag, and makepkg refuses to build a release re
 
 The watcher, `.github/workflows/update.yml`, looks for a new vtium release every day, and at once when vtium sends this repository a `repository_dispatch` event of type `vtium-release`. When vtium has published a release newer than the tag the release recipes build, `./bump-release` moves `vtium`, `vtium-minspec`, `vtium-minspec-gpu` and `vtium-terminfo` to that tag together, and the watcher opens a pull request from the branch `bump/vtium-release` and queues it to merge. It takes pre-releases too, while `bump-release` sets `include_prereleases=yes`. The build, `.github/workflows/build.yml`, builds every recipe in a clean Arch container for each pull request, lints the packages with namcap, and runs `aur-publish --dry-run` and the tests. Its check `gate`, which main's branch rule requires, lets the pull request merge. On main, the build's job `publish` runs `aur-publish` for each recipe whose directory the push changed. The watcher needs the secret `BUMP_PAT` and publishing needs the secret `AUR_SSH_KEY`, and each job stops with an error when its secret is missing.
 
-To hold a bump for review, add an empty file `ci/<recipe>/.no-auto-merge`: the watcher still opens the pull request, which then waits for the maintainer to merge it. The files that only CI reads live under `ci/`, because `aur-publish` pushes a recipe's whole directory to the AUR.
+To hold a bump for review, add an empty file `ci/<recipe>/.no-auto-merge`: the watcher still opens the pull request, which then waits for the maintainer to merge it. The watcher leaves an open bump pull request for the same tag as it is, so a commit pushed onto it stays. `ci/vtium/.no-auto-merge` holds the move to `v0.1.0-alpha.6` until a person adds `vtium`'s new features and `hwaccel` on to that pull request, as the file says. The files that only CI reads live under `ci/`, because `aur-publish` pushes a recipe's whole directory to the AUR.
 
 ## Publishing and testing by hand
 
