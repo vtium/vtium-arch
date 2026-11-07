@@ -104,7 +104,9 @@ api "$tmp/draft.json" v9.0.0:draft "$start:pre"
 unchanged "a draft release changes nothing" "$(run "$tmp/draft.json")"
 
 # A newer pre-release moves all four release recipes and the README.
-new=v0.1.0-alpha.6 new_pkgver=0.1.0alpha.6
+# A version no real release reaches, so it stays newer than whatever the
+# recipes build after each real bump.
+new=v9.0.0-alpha.1 new_pkgver=9.0.0alpha.1
 api "$tmp/newer.json" "$new:pre" "$start:pre" v0.1.0-alpha.1:pre
 out=$(run "$tmp/newer.json")
 want="current=$start
