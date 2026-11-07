@@ -44,13 +44,18 @@ jobs:
   bump:
     needs: preflight
     runs-on: ubuntu-latest
+    # The identity of the watcher's commits, which tells them apart from a
+    # commit a person pushes onto the bump pull request.
+    env:
+      WATCHER_NAME: vtium-arch watcher
+      WATCHER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
     container:
       image: archlinux:base-devel
     steps:
       - name: Install the tools
         run: pacman -Syu --noconfirm --needed git jq github-cli
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       # makepkg --printsrcinfo, which bump-release runs, refuses to run as
       # root, which the container's user is.
@@ -81,22 +86,31 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git status --short
 
-      # When the open bump pull request already proposes this tag, the
-      # watcher leaves it as it is. create-pull-request would otherwise
-      # rebuild the branch from main and drop any commit the maintainer
-      # pushed onto it, such as a recipe change that must go with the new
-      # tag.
-      - name: Look for an open pull request for this tag
+      # The watcher leaves the open bump pull request as it is when it already
+      # proposes this tag, or when it carries a commit the watcher did not
+      # write, such as a recipe change a person pushed onto it. Rewriting it
+      # would rebuild the branch from main and drop that commit. A commit is
+      # the watcher's when its author is the watcher's identity and its
+      # subject is the watcher's commit message.
+      - name: Look at the open bump pull request
         id: open
         if: steps.up.outputs.tag
         env:
           GH_TOKEN: ${{ secrets.BUMP_PAT }}
           TAG: ${{ steps.up.outputs.tag }}
         run: |
-          open=$(gh pr list -R "$GITHUB_REPOSITORY" --head bump/vtium-release --state open \
-                   --json number,title --jq '.[] | select(.title == "vtium " + env.TAG) | .number')
-          if [ -n "$open" ]; then
-            echo "::notice::#$open already proposes vtium $TAG, so the watcher leaves it as it is."
+          pr=$(gh pr list -R "$GITHUB_REPOSITORY" --head bump/vtium-release --state open --json number --jq '.[0].number // empty')
+          [ -n "$pr" ] || exit 0
+          echo "number=$pr" >> "$GITHUB_OUTPUT"
+          title=$(gh pr view "$pr" -R "$GITHUB_REPOSITORY" --json title --jq .title)
+          foreign=$(gh pr view "$pr" -R "$GITHUB_REPOSITORY" --json commits --jq \
+            '[.commits[] | select((.messageHeadline | startswith("bump: the release recipes build vtium ") | not)
+                                  or ([.authors[].email] != [env.WATCHER_EMAIL])) | .oid[0:7]] | join(" ")')
+          if [ "$title" = "vtium $TAG" ]; then
+            echo "::notice::#$pr already proposes vtium $TAG, so the watcher leaves it as it is."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "$foreign" ]; then
+            echo "::notice::#$pr carries commits the watcher did not write ($foreign), so the watcher leaves it as it is and proposes vtium $TAG once #$pr merges or closes."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -106,49 +120,82 @@ jobs:
       - name: Open the pull request
         id: pr
         if: steps.up.outputs.tag && steps.open.outputs.skip != 'true'
-        uses: peter-evans/create-pull-request@v8
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           token: ${{ secrets.BUMP_PAT }}
           branch: bump/vtium-release
           delete-branch: true
+          author: ${{ env.WATCHER_NAME }} <${{ env.WATCHER_EMAIL }}>
+          committer: ${{ env.WATCHER_NAME }} <${{ env.WATCHER_EMAIL }}>
           title: "vtium ${{ steps.up.outputs.tag }}"
           commit-message: "bump: the release recipes build vtium ${{ steps.up.outputs.tag }}, in place of ${{ steps.up.outputs.current }}"
           body: |
             vtium published the release [${{ steps.up.outputs.tag }}](${{ steps.up.outputs.url }})${{ steps.up.outputs.prerelease == 'true' && ', a pre-release,' || '' }} and the release recipes built ${{ steps.up.outputs.current }}. The watcher (`.github/workflows/update.yml`, which runs `./bump-release`) moves the recipes ${{ steps.up.outputs.recipes }} to the tag `${{ steps.up.outputs.tag }}`, as pkgver `${{ steps.up.outputs.pkgver }}` and pkgrel 1, makes each one's `.SRCINFO` again, and rewrites the tag in the README's table.
 
-            build.yml builds every recipe from the new tag, checks the tag's signature against each recipe's `validpgpkeys`, and runs `aur-publish --dry-run` for each recipe. The watcher queues this pull request to merge once that build's gate passes, unless a recipe opts out with `ci/<recipe>/.no-auto-merge`. After the merge, build.yml on main publishes the four recipes to the AUR.
+            build.yml builds every recipe from the new tag, checks the tag's signature against each recipe's `validpgpkeys`, and runs `aur-publish --dry-run` for each recipe. The watcher queues this pull request to merge once that build's gate passes, unless a recipe opts out with `ci/<recipe>/.no-auto-merge`. After the merge, build.yml on main publishes the recipes the AUR is behind on. A commit pushed onto this pull request stays: the watcher leaves a bump pull request alone once it carries a commit the watcher did not write.
 
-      # A recipe opts out of the merge with ci/<recipe>/.no-auto-merge, and
-      # then the pull request waits for the maintainer. The watcher also
-      # refuses to queue the merge unless main's branch rule requires the
-      # gate: without that, GitHub would merge the pull request before its
-      # build finished.
-      - name: Queue the merge
-        if: steps.pr.outputs.pull-request-number
+      # The pull request this run opened, or the open one it left alone.
+      #
+      # A recipe opts out of the merge with ci/<recipe>/.no-auto-merge on the
+      # pull request's branch. The watcher then turns off an auto-merge that
+      # is already on, and the pull request waits for the maintainer.
+      # Otherwise the watcher refuses to queue the merge unless main requires
+      # the check gate, since GitHub would merge the pull request before its
+      # build finished, and queues it through GraphQL's
+      # enablePullRequestAutoMerge. Unlike gh pr merge --auto, that never
+      # merges on the spot: on a pull request GitHub could merge at once, it
+      # fails, and the watcher leaves the merge to the maintainer.
+      - name: Queue the merge, or hold it
+        if: steps.pr.outputs.pull-request-number || steps.open.outputs.number
         env:
           GH_TOKEN: ${{ secrets.BUMP_PAT }}
-          PR: ${{ steps.pr.outputs.pull-request-number }}
-          RECIPES: ${{ steps.up.outputs.recipes }}
+          PR: ${{ steps.pr.outputs.pull-request-number || steps.open.outputs.number }}
         run: |
-          for r in $RECIPES; do
-            if [ -e "ci/$r/.no-auto-merge" ]; then
-              echo "::notice::#$PR waits for the maintainer, because ci/$r/.no-auto-merge opts $r out of the merge on a green build."
-              exit 0
+          R=$GITHUB_REPOSITORY
+          git fetch -q origin "refs/pull/$PR/head"
+          held=$(git ls-tree -r --name-only FETCH_HEAD -- ci | grep '/\.no-auto-merge$' | tr '\n' ' ' || true)
+          auto=$(gh pr view "$PR" -R "$R" --json autoMergeRequest --jq '.autoMergeRequest != null')
+          if [ -n "$held" ]; then
+            if [ "$auto" = true ]; then
+              gh pr merge --disable-auto -R "$R" "$PR"
+              echo "::notice::The watcher turned off the auto-merge of #$PR."
             fi
-          done
+            echo "::notice::#$PR waits for the maintainer, because $held holds it."
+            exit 0
+          fi
           # Classic branch protection shows in the branch itself, which any
           # token that reads the repository can see, and in its protection
           # endpoint, which needs a token that may read the repository's
           # administration. Rulesets show in the rules endpoint.
-          required=$( { gh api "repos/$GITHUB_REPOSITORY/branches/main" \
+          required=$( { gh api "repos/$R/branches/main" \
                           --jq '.protection.required_status_checks.contexts[]?' 2>/dev/null || true
-                        gh api "repos/$GITHUB_REPOSITORY/branches/main/protection/required_status_checks" \
+                        gh api "repos/$R/branches/main/protection/required_status_checks" \
                           --jq '.contexts[]?, .checks[]?.context' 2>/dev/null || true
-                        gh api "repos/$GITHUB_REPOSITORY/rules/branches/main" \
+                        gh api "repos/$R/rules/branches/main" \
                           --jq '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context' 2>/dev/null || true
                       } | sort -u)
           if ! grep -qx gate <<<"$required"; then
             echo "::error::#$PR waits for the maintainer: main's branch rule does not require the check gate, so a merge queued now would not wait for the build."
             exit 1
           fi
-          gh pr merge --auto --merge -R "$GITHUB_REPOSITORY" "$PR"
+          if [ "$auto" = true ]; then
+            echo "::notice::#$PR is already queued to merge once gate passes."
+            exit 0
+          fi
+          id=$(gh pr view "$PR" -R "$R" --json id --jq .id)
+          # $id in the query is GraphQL's variable, not the shell's.
+          # shellcheck disable=SC2016
+          if ! out=$(gh api graphql -f id="$id" -f query='
+                mutation($id: ID!) {
+                  enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: MERGE}) {
+                    pullRequest { number }
+                  }
+                }' 2>&1); then
+            if grep -qi 'clean status' <<<"$out"; then
+              echo "::warning::#$PR passes every check already, and GitHub queues no auto-merge on a pull request it could merge at once, so #$PR waits for the maintainer to merge it."
+              exit 0
+            fi
+            echo "::error::GitHub refused to queue the merge of #$PR: $out"
+            exit 1
+          fi
+          echo "::notice::#$PR merges once gate passes."
