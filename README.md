@@ -224,7 +224,7 @@ Removing the package changes no unit, so a VT you did not give back keeps links 
 
 ## Publishing to the AUR
 
-`aur-publish DIR` pushes the recipe in DIR to `ssh://aur@aur.archlinux.org/<pkgbase>.git`, under the SSH key of whoever runs it, so the maintainer runs it after a change here is reviewed. It splits DIR's history out with `git subtree split --prefix DIR`, so each push carries on from the last one, and pushes it to the AUR repository's `master` branch, the only branch the AUR takes. First it checks:
+`aur-publish DIR` pushes the recipe in DIR to `ssh://aur@aur.archlinux.org/<pkgbase>.git`, under the SSH key of whoever runs it. The build workflow runs it on main after every recipe builds, for each recipe the push changed, as [How a new release reaches the AUR](#how-a-new-release-reaches-the-aur) describes, and the maintainer can run it by hand. It splits DIR's history out with `git subtree split --prefix DIR`, so each push carries on from the last one, and pushes it to the AUR repository's `master` branch, the only branch the AUR takes. First it checks:
 
 - that DIR is committed, and its `.SRCINFO` is what `makepkg --printsrcinfo` prints;
 - that no checksum is a placeholder;
@@ -232,7 +232,7 @@ Removing the package changes no unit, so a VT you did not give back keeps links 
 - that a release's tag exists on GitHub, and that it is signed by a key in `validpgpkeys`, checked against the key files in DIR's `keys/pgp/` alone, in a keyring of its own, with no configuration of the user's, so it never reaches the user's own keys or asks for a passphrase;
 - that every commit it pushes holds `PKGBUILD` and `.SRCINFO`, as the AUR asks.
 
-`--dry-run` runs the checks and prints the push without running it. `./test-aur-publish` runs each refusal against a scratch clone, a scratch source repository and scratch keys, and pushes nothing. `./test-install-messages` checks what pacman prints after an install, an upgrade and a removal, for every console package's install script, against a scratch `/etc/systemd/system` and `/var/lib/vtium`, and that each console package's script is the same as `vtium`'s.
+`--dry-run` runs the checks and prints the push without running it. `./test-aur-publish` runs each refusal against a scratch clone, a scratch source repository and scratch keys, and pushes nothing. `./test-install-messages` checks what pacman prints after an install, an upgrade and a removal, for every console package's install script, against a scratch `/etc/systemd/system` and `/var/lib/vtium`, and that each console package's script is the same as `vtium`'s. `./test-bump-release` runs `bump-release` against stand-in answers from GitHub's API in a scratch clone, and asks GitHub nothing.
 
 ```sh
 ./aur-publish --dry-run vtium-git
@@ -248,6 +248,41 @@ env -u VTIUM_GIT_URL -u VTIUM_GIT_BRANCH -u VTIUM_FEATURES makepkg --printsrcinf
 Each recipe built from a release tag waits for its tag: `aur-publish` refuses it until the maintainer has signed and pushed the tag its `_tag` names.
 
 The AUR gives each package name to one AUR repository. `vtium-terminfo` was built by the `vtium` recipe until it moved to a recipe of its own, so publish `vtium` first, which no longer builds it, and `vtium-terminfo` after. In the same way, publish `vtium-git` before `vtium-terminfo-git`.
+
+## How a new release reaches the AUR
+
+Two GitHub Actions workflows in `.github/workflows/` take each new vtium release to the AUR. The watcher, `update.yml`, moves the release recipes to the new release in a pull request. The build, `build.yml`, builds that pull request, merges it when the build passes, and publishes the recipes from main. The maintainer does nothing while the build passes.
+
+### The watcher
+
+The watcher runs every day at 05:23 UTC. It also runs when someone starts it from the Actions tab, and when vtium's release workflow sends this repository a `repository_dispatch` event of type `vtium-release`, so that a release can reach the AUR without waiting for the next day.
+
+The watcher runs `./bump-release`. It asks GitHub's API for vtium's releases, leaves out drafts, and takes the release whose `pkgver` `vercmp` sorts highest. When that release is not newer than the tag the release recipes build, it changes nothing. When it is newer, `bump-release` moves the four release recipes, `vtium`, `vtium-minspec`, `vtium-minspec-gpu` and `vtium-terminfo`, to the new tag together: it rewrites `_tag`, `pkgver` and `pkgrel=1` in each, makes each one's `.SRCINFO` again with `makepkg --printsrcinfo`, and rewrites the tag in the table at the top of this README. The four move together because every console package built from a release depends on `vtium-terminfo` from the same release. The `-git` recipes follow `main` and `vtium-fonts` builds from this repository alone, so the watcher leaves them as they are.
+
+The watcher takes every release, pre-releases included, because `bump-release` sets `include_prereleases=yes` near its top. With `include_prereleases=no`, it takes only a release that GitHub does not mark as a pre-release. It passes over a release whose tag has neither the form `vX.Y.Z` nor `vX.Y.Z-PRE`, where `PRE` starts with a letter, since no other form maps to a `pkgver` that pacman sorts correctly (see [Versions](#versions)).
+
+The watcher opens the pull request from the branch `bump/vtium-release`. When vtium publishes another release before the last bump merges, the watcher rewrites that pull request to the newer release instead of opening a second one. It then queues the pull request to merge, with a merge commit, once the build's check `gate` passes. It refuses to queue the merge while main's branch rule does not require `gate`, because GitHub would then merge the pull request before its build finished, and the watcher's run fails with an error that says so.
+
+### The build
+
+The build runs on every pull request, on every push to main, and when someone starts it from the Actions tab. For each recipe, in a fresh `archlinux:base-devel` container, `ci/build-recipe` imports the recipe's `keys/pgp/` keys, builds and installs the recipe of this repository that the recipe depends on, which is the terminfo recipe for each console, and builds the recipe with `makepkg -s`, as a user would. namcap then lints the packages, and any error it reports fails the build, unless `ci/<recipe>/.namcap-allow` accepts it: one extended regular expression to a line, with a comment above it that says why. Beside the builds, the build runs `aur-publish --dry-run` for each recipe, which checks the signature on a release's tag, and runs `./test-aur-publish`, `./test-install-messages` and `./test-bump-release`. Its job `gate` passes only when every recipe built and every check passed, and its name stays `gate` as recipes come and go.
+
+On main, after `gate` passes, the build's job `publish` runs `ci/publish-aur`, which runs `aur-publish` for each recipe whose directory the push changed, one at a time and each terminfo recipe last. It pushes with the key in the secret `AUR_SSH_KEY`, loaded into an ssh-agent, and ssh accepts only the AUR host keys in `ci/aur.known_hosts`. Those are the keys whose fingerprints the AUR publishes on its home page: Ed25519 `SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4`, ECDSA `SHA256:uTa/0PndEgPZTf76e1DFqXKJEXKsn7m9ivhLQtzGOCI` and RSA `SHA256:5s5cIyReIfNNVGRFdDbe3hdYiI5OelHGpw2rOUud3Q8`. When the AUR changes its keys, the maintainer replaces the file. When a recipe fails to reach the AUR, the maintainer runs the failed job again from the Actions tab, or runs `./aur-publish` by hand.
+
+The files that only the workflows read live under `ci/`, not in a recipe's directory, because `aur-publish` pushes everything in the directory to the AUR and expects a `-git` twin to hold the same files.
+
+### What the automation needs
+
+| Setting | Where the maintainer sets it | What it is for |
+|---|---|---|
+| `BUMP_PAT` | a secret of this repository | the token the watcher opens and merges its pull request with: a fine-grained token for this repository alone with read and write access to contents and pull requests, or a classic token with the `repo` scope. A pull request opened with the workflow's own token starts no build, so the watcher stops with an error while `BUMP_PAT` is unset. The token expires on the date its owner chose, and the watcher fails from then until it is replaced. |
+| `AUR_SSH_KEY` | a secret of this repository | the private half of an SSH key with no passphrase, whose public half the AUR account that maintains the packages lists. The job `publish` fails with an error while it is unset. |
+| Allow auto-merge | Settings, General, Pull Requests | lets the watcher queue its pull request to merge. |
+| A branch rule on main that requires the check `gate` | Settings, Branches or Rules | holds each pull request until its build passes. The watcher queues no merge without it. |
+
+### Stopping it
+
+To hold the bump for review, add an empty file `ci/<recipe>/.no-auto-merge` for any of the four release recipes, such as `ci/vtium/.no-auto-merge`. The watcher still opens the pull request, and the build still builds it, but the pull request waits for the maintainer to merge it. Once it merges, the job `publish` publishes it as usual. To stop the watcher altogether, disable it with `gh workflow disable update.yml -R vtium/vtium-arch`, or from the Actions tab. To stop publishing, delete the secret `AUR_SSH_KEY`: the builds go on, and the job `publish` fails, naming the missing secret.
 
 ## License
 
