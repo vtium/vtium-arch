@@ -31,9 +31,13 @@
 #
 # The pkgver of a tag is the tag without its v and without the hyphen
 # before a pre-release, so that pacman sorts 0.1.0alpha.6 before 0.1.0.
-# bump-release takes only tags of the form vX.Y.Z or vX.Y.Z-PRE, where PRE
-# starts with a letter and holds letters, digits and dots, and passes over
-# any other tag with a note on stderr.
+# bump-release takes only tags of the form vX.Y.Z or vX.Y.Z-pre, where pre
+# starts with a lowercase letter and holds lowercase letters, digits and
+# dots, since pacman's vercmp orders an uppercase label differently. It
+# passes over a release whose tag has any other form, and prints a
+# ::warning:: line about it on stderr, which the watcher shows as a warning
+# on its run. An answer from the API that is not a JSON list of releases
+# fails the run.
 #
 # Environment:
 #   GH_TOKEN             a GitHub token for the API request, when set; the
@@ -56,13 +60,13 @@ die() {
 
 # pkgver_of TAG prints TAG's pkgver, or fails when TAG has another form.
 pkgver_of() {
-	[[ $1 =~ ^v([0-9]+(\.[0-9]+)*)(-([A-Za-z][A-Za-z0-9.]*))?$ ]] || return 1
+	[[ $1 =~ ^v([0-9]+(\.[0-9]+)*)(-([a-z][a-z0-9.]*))?$ ]] || return 1
 	printf '%s%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[4]}"
 }
 
 if [ "${1-}" = pkgver ]; then
 	[ $# = 2 ] || die "usage: bump-release pkgver TAG"
-	pkgver_of "$2" || die "the tag '$2' has neither the form vX.Y.Z nor vX.Y.Z-PRE"
+	pkgver_of "$2" || die "the tag '$2' has neither the form vX.Y.Z nor vX.Y.Z-pre with a lowercase pre"
 	exit 0
 fi
 [ $# = 0 ] || die "usage: bump-release, or bump-release pkgver TAG"
@@ -79,7 +83,7 @@ for r in "${recipes[@]}"; do
 	[ -z "$current" ] && current=$t
 	[ "$t" = "$current" ] ||
 		die "$r/PKGBUILD builds the tag $t and ${recipes[0]}/PKGBUILD builds $current; the release recipes must build the same tag"
-	want=$(pkgver_of "$t") || die "$r/PKGBUILD builds the tag $t, which has neither the form vX.Y.Z nor vX.Y.Z-PRE"
+	want=$(pkgver_of "$t") || die "$r/PKGBUILD builds the tag $t, which has neither the form vX.Y.Z nor vX.Y.Z-pre with a lowercase pre"
 	[ "$(sed -n 's/^pkgver=//p' "$r/PKGBUILD")" = "$want" ] ||
 		die "$r/PKGBUILD builds the tag $t, so its pkgver must be $want"
 done
@@ -96,21 +100,30 @@ else
 		die "GitHub's API did not list the releases of $repo"
 fi
 
+# Each release that is not a draft, as one line of tag, pre-release flag and
+# page. jq fails on an answer that is not a JSON list of releases, such as an
+# error page, and bump-release fails with it, rather than read the answer as
+# no newer release.
+[ -n "${releases//[[:space:]]/}" ] || die "GitHub's API gave an empty answer, which is not a list of releases"
+listed=$(jq -r 'if type == "array" then .[] | select(.draft | not) | [.tag_name, (.prerelease | tostring), .html_url] | @tsv else error("not a list of releases") end' <<<"$releases" 2>&1) ||
+	die "GitHub's API answered with something other than a list of releases: ${listed:0:200}"
+
 # The newest release that qualifies: no draft, and no pre-release unless
 # include_prereleases says so.
 best='' best_pkgver='' best_pre='' best_url=''
 while IFS=$'\t' read -r tag pre url; do
+	[ -n "$tag" ] || continue
 	if [ "$pre" = true ] && [ "$include_prereleases" != yes ]; then
 		continue
 	fi
 	if ! v=$(pkgver_of "$tag"); then
-		printf 'bump-release: passing over the release %s, whose tag has neither the form vX.Y.Z nor vX.Y.Z-PRE\n' "$tag" >&2
+		printf '::warning::bump-release passes over the release %s, whose tag has neither the form vX.Y.Z nor vX.Y.Z-pre with a lowercase pre\n' "$tag" >&2
 		continue
 	fi
 	if [ -z "$best" ] || [ "$(vercmp "$v" "$best_pkgver")" -gt 0 ]; then
 		best=$tag best_pkgver=$v best_pre=$pre best_url=$url
 	fi
-done < <(jq -r '.[] | select(.draft | not) | [.tag_name, (.prerelease | tostring), .html_url] | @tsv' <<<"$releases")
+done <<<"$listed"
 
 [ -n "$best" ] || exit 0
 [ "$(vercmp "$best_pkgver" "$current_pkgver")" -gt 0 ] || exit 0

@@ -83,7 +83,7 @@ for pair in v0.1.0-alpha.6=0.1.0alpha.6 v0.1.0=0.1.0 v0.2.0-beta.1=0.2.0beta.1 v
 	got=$(./bump-release pkgver "$tag" 2>&1) || true
 	[ "$got" = "$want" ] && ok "the pkgver of $tag is $want" || fail "the pkgver of $tag" "got '$got', wanted '$want'"
 done
-for tag in 0.1.0 v0.1.0-1 v0.1.0-rc-1 v0.1.0+build v0.1.0-alpha/6 vX; do
+for tag in 0.1.0 v0.1.0-1 v0.1.0-rc-1 v0.1.0+build v0.1.0-alpha/6 vX v0.1.0-RC.1 v0.1.0-Alpha.6 v0.1.0-alpha.B; do
 	if ./bump-release pkgver "$tag" >/dev/null 2>&1; then
 		fail "the tag $tag is refused" "it was given a pkgver"
 	else
@@ -150,6 +150,31 @@ grep -qx 'tag=v0.1.0-alpha.10' <<<"$out" && ok "alpha.10 sorts after alpha.9" ||
 # A release whose tag has another form is passed over.
 api "$tmp/odd.json" release-2 "$start:pre"
 unchanged "a tag of another form is passed over" "$(run "$tmp/odd.json" 2>/dev/null)"
+
+# A newer release whose label is not lowercase is passed over, with a
+# warning the watcher shows on its run.
+api "$tmp/upper.json" v0.2.0-RC.1:pre "$start:pre"
+err=$(run "$tmp/upper.json" 2>&1 >/dev/null)
+unchanged "a newer tag with an uppercase label changes nothing" "$(run "$tmp/upper.json" 2>/dev/null)"
+grep -qF '::warning::bump-release passes over the release v0.2.0-RC.1' <<<"$err" &&
+	ok "a tag with an uppercase label is named in a warning" || fail "a tag with an uppercase label is named in a warning" "stderr: $err"
+
+# An answer from the API that is not a list of releases fails the run and
+# changes nothing, rather than read as no newer release.
+printf '<html>API rate limit exceeded</html>\n' >"$tmp/html.json"
+printf '{"message":"API rate limit exceeded"}\n' >"$tmp/object.json"
+: >"$tmp/blank.json"
+for answer in html object blank; do
+	if err=$(run "$tmp/$answer.json" 2>&1); then
+		fail "an API answer that is not a list ($answer) fails" "it passed and printed: $err"
+	elif ! grep -qE "GitHub's API (answered with something other than a list|gave an empty answer)" <<<"$err"; then
+		fail "an API answer that is not a list ($answer) fails" "got: $err"
+	elif [ -n "$(git status --porcelain)" ]; then
+		fail "an API answer that is not a list ($answer) fails" "it changed: $(git status --porcelain | tr '\n' ' ')"
+	else
+		ok "an API answer that is not a list ($answer) fails and changes nothing"
+	fi
+done
 
 # With the setting turned to no, only a release that is not a pre-release
 # moves the recipes.
