@@ -1,0 +1,178 @@
+name: build
+
+on:
+  # The pull_request trigger has no path filter. The job gate below is the
+  # check that main's branch rule requires, and a path filter that skipped
+  # this workflow would leave a pull request with no gate at all, which the
+  # rule can never pass.
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A newer push to a pull request cancels the build of the older one. Runs on
+# main never cancel each other. The job publish compares every recipe with
+# the AUR, so a run on main that GitHub dropped, or whose gate failed, leaves
+# nothing unpublished once a later run on main passes.
+concurrency:
+  group: build-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # The recipes are the directories that hold a PKGBUILD, so a new recipe
+  # needs no change here.
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      recipes: ${{ steps.list.outputs.recipes }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - id: list
+        run: |
+          recipes=$(for f in */PKGBUILD; do echo "${f%/PKGBUILD}"; done | LC_ALL=C sort | jq -R . | jq -sc .)
+          test "$recipes" != "[]"
+          echo "recipes=$recipes" >> "$GITHUB_OUTPUT"
+          echo "recipes: $recipes"
+
+  # Each recipe builds in a fresh Arch container, as a user's makepkg -s
+  # would build it, and namcap lints its packages (ci/build-recipe).
+  build:
+    needs: discover
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    strategy:
+      fail-fast: false
+      matrix:
+        recipe: ${{ fromJSON(needs.discover.outputs.recipes) }}
+    steps:
+      - name: Install the tools
+        run: pacman -Syu --noconfirm --needed git namcap
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      # makepkg refuses to run as root, which the container's user is, and
+      # makepkg -s installs dependencies through sudo.
+      - name: Create the build user
+        run: |
+          useradd -m builder
+          echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      - name: Build and lint
+        run: sudo -u builder ci/build-recipe "${{ matrix.recipe }}"
+
+  # The checks that read the repository rather than build it: aur-publish
+  # --dry-run for each recipe, which checks .SRCINFO, the signed tag of a
+  # release recipe and the steps each recipe shares with its -git twin; and
+  # the test scripts.
+  check:
+    needs: discover
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Install the tools
+        run: pacman -Syu --noconfirm --needed git jq
+
+      # aur-publish splits each recipe's history out of the repository, and
+      # the test scripts clone it, so the checkout carries the whole history.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+
+      - name: Create the check user
+        run: |
+          useradd -m builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      - name: aur-publish --dry-run for each recipe
+        env:
+          RECIPES: ${{ needs.discover.outputs.recipes }}
+        run: |
+          failed=
+          for r in $(jq -r '.[]' <<<"$RECIPES"); do
+            echo "::group::aur-publish --dry-run $r"
+            if sudo -u builder ./aur-publish --dry-run "$r"; then
+              echo "::endgroup::"
+            else
+              echo "::endgroup::"
+              echo "::error::aur-publish --dry-run $r failed"
+              failed=1
+            fi
+          done
+          test -z "$failed"
+
+      - name: test-aur-publish
+        run: sudo -u builder ./test-aur-publish
+
+      - name: test-install-messages
+        run: sudo -u builder ./test-install-messages
+
+      - name: test-bump-release
+        run: sudo -u builder ./test-bump-release
+
+      - name: test-publish-aur
+        run: sudo -u builder ./test-publish-aur
+
+  # One check whose name stays the same as recipes come and go, so that
+  # main's branch rule can require it: gate passes only when every recipe
+  # built and every check passed. A cancelled or skipped job fails it too.
+  gate:
+    name: gate
+    needs: [discover, build, check]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every recipe to have built and every check to have passed
+        run: |
+          echo "discover=${{ needs.discover.result }} build=${{ needs.build.result }} check=${{ needs.check.result }}"
+          test "${{ needs.discover.result }}" = success
+          test "${{ needs.build.result }}" = success
+          test "${{ needs.check.result }}" = success
+
+  # On main, after the gate, ci/publish-aur compares every recipe that
+  # ci/unpublished does not name with its AUR repository, and publishes each
+  # one the AUR is behind on or does not have yet, the consoles first. A
+  # later run therefore publishes what an earlier one missed. One run
+  # publishes at a time, so two runs never push to one AUR repository at
+  # once; GitHub may drop a waiting run, and the next run publishes what it
+  # would have.
+  publish:
+    needs: gate
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    concurrency:
+      group: publish-aur
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Require the AUR key
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: |
+          test -n "$AUR_SSH_KEY" || {
+            echo "::error::AUR_SSH_KEY is unset, so this run cannot publish to the AUR."
+            exit 1
+          }
+
+      - name: Install the tools
+        run: pacman -Syu --noconfirm --needed git openssh
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+
+      - name: Create the publish user
+        run: |
+          useradd -m builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      - name: Publish to the AUR
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: sudo -u builder --preserve-env=AUR_SSH_KEY ci/publish-aur

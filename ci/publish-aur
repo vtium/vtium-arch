@@ -1,0 +1,192 @@
+#!/bin/bash
+# Publishes to the AUR each recipe whose AUR repository is behind this
+# repository, with aur-publish, under the SSH key in the environment variable
+# AUR_SSH_KEY. The build workflow, .github/workflows/build.yml, runs it on
+# main after every recipe has built.
+#
+#   AUR_SSH_KEY=... ci/publish-aur [--dry-run]
+#
+# publish-aur looks at every recipe, the directories that hold a PKGBUILD,
+# apart from those that ci/unpublished names, which it never publishes. For
+# each, it compares the history aur-publish would push, git subtree split
+# --prefix DIR, with the AUR repository's master, read with git ls-remote:
+#
+#   - When they are the same, the AUR is up to date, and it pushes nothing.
+#   - When the AUR's master is an ancestor of the split, the push is a
+#     fast-forward, and it runs aur-publish DIR.
+#   - When the AUR has no repository of that name, it runs aur-publish DIR,
+#     whose first push creates the repository.
+#   - When the AUR holds commits the split lacks, it pushes nothing for that
+#     recipe and prints a warning, since only a person can tell which history
+#     is right.
+#
+# So a run publishes whatever an earlier run missed, whether GitHub dropped
+# that run, its gate failed, or one push failed.
+#
+# The order matters on the AUR, which gives each package name to one AUR
+# repository. The consoles go first, then vtium-fonts and the terminfo
+# recipes: before vtium-terminfo had a recipe of its own, the vtium recipe
+# built it, so the new vtium must give up the name vtium-terminfo before the
+# vtium-terminfo repository can take it, and the same holds for vtium-git
+# and vtium-terminfo-git. A console's push would therefore drop its terminfo
+# package from the AUR until the terminfo recipe follows. publish-aur pushes
+# no recipe whose dependencies in this repository (vtium's on vtium-terminfo,
+# for one) are neither up to date on the AUR nor about to be pushed in this
+# run, and it fails the run when a recipe reached the AUR but one of those
+# dependencies did not.
+#
+# publish-aur tries every recipe, and fails at the end if a push failed, a
+# recipe was held back for its dependencies, or a dependency did not follow.
+# A recipe whose AUR history differs makes a warning, not a failure.
+#
+# AUR_SSH_KEY holds a private key with no passphrase, whose public half the
+# AUR account that maintains the packages lists. publish-aur loads it into
+# an ssh-agent of its own and unsets the variable, so that neither
+# aur-publish nor git sees the key itself, and it prints the key's
+# fingerprint, which is no secret, so that a refused push can be compared
+# with the keys the AUR account lists. ssh checks the AUR's host key against
+# ci/aur.known_hosts alone, the keys whose fingerprints the AUR publishes on
+# https://aur.archlinux.org.
+#
+# --dry-run needs no key: it runs aur-publish --dry-run for each recipe it
+# would publish. PUBLISH_AUR_REMOTE, such as file:///tmp/aur/%s.git, names
+# where publish-aur reads each AUR repository's master, with %s for the
+# recipe, so that a test can stand in for the AUR; aur-publish still names
+# the AUR itself.
+set -euo pipefail
+
+die() {
+	printf 'publish-aur: %s\n' "$*" >&2
+	exit 1
+}
+dry=
+case ${1-} in
+--dry-run) dry=1 ;;
+'') ;;
+*) die "usage: AUR_SSH_KEY=... ci/publish-aur [--dry-run]" ;;
+esac
+
+top=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+cd "$top"
+[ -f ci/unpublished ] || die "ci/unpublished is missing"
+declare -A unpublished=()
+while read -r d; do
+	case $d in '' | '#'*) continue ;; esac
+	unpublished[$d]=1
+done <ci/unpublished
+
+# Every recipe, the consoles first, then vtium-fonts and the terminfo
+# recipes.
+mapfile -t order < <(for f in */PKGBUILD; do echo "${f%/PKGBUILD}"; done | LC_ALL=C sort |
+	awk '/^vtium-fonts$|-terminfo(-git)?$/ { last[++n] = $0; next } { print } END { for (i = 1; i <= n; i++) print last[i] }')
+
+# The recipes of this repository that DIR's packages depend on.
+local_deps() {
+	local d
+	while read -r d; do
+		[ -f "$d/PKGBUILD" ] && [ "$d" != "$1" ] && echo "$d"
+	done < <(sed -n 's/^[[:space:]]*depends = \([^<>=:]*\).*/\1/p' "$1/.SRCINFO" | sort -u)
+	return 0
+}
+
+# Each recipe's state, decided before anything is pushed: unpublished,
+# current, push, diverged or failed.
+declare -A state=()
+failed=() diverged=()
+for d in "${order[@]}"; do
+	if [ -n "${unpublished[$d]-}" ]; then
+		echo "publish-aur: $d is never published; ci/unpublished names it."
+		state[$d]=unpublished
+		continue
+	fi
+	if ! split=$(git subtree split --prefix "$d" HEAD 2>/dev/null); then
+		echo "::error::git subtree split --prefix $d failed"
+		state[$d]=failed failed+=("$d")
+		continue
+	fi
+	# shellcheck disable=SC2059 # the remote's template is the format
+	if ! aur=$(git ls-remote "$(printf "${PUBLISH_AUR_REMOTE:-https://aur.archlinux.org/%s.git}" "$d")" refs/heads/master); then
+		echo "::error::git ls-remote of the AUR repository $d failed"
+		state[$d]=failed failed+=("$d")
+		continue
+	fi
+	aur=${aur%%[[:space:]]*}
+	if [ -z "$aur" ]; then
+		echo "publish-aur: $d has no AUR repository yet, and its first push creates it."
+		state[$d]=push
+	elif [ "$aur" = "$split" ]; then
+		echo "publish-aur: $d is up to date on the AUR at ${aur:0:7}."
+		state[$d]=current
+	elif git merge-base --is-ancestor "$aur" "$split" 2>/dev/null; then
+		echo "publish-aur: $d moves on the AUR from ${aur:0:7} to ${split:0:7}."
+		state[$d]=push
+	else
+		echo "::warning::The AUR repository $d holds commits that this repository's history of $d lacks: its master is ${aur:0:7}, which is not an ancestor of ${split:0:7}. publish-aur pushes nothing for $d; a person decides which history is right."
+		state[$d]=diverged diverged+=("$d")
+	fi
+done
+
+# A recipe goes only when each of its dependencies here is up to date on
+# the AUR or goes in this run too.
+push=()
+for d in "${order[@]}"; do
+	[ "${state[$d]}" = push ] || continue
+	blocked=
+	for dep in $(local_deps "$d"); do
+		case ${state[$dep]-} in
+		current | push) ;;
+		*) blocked+=" $dep (${state[$dep]-unknown})" ;;
+		esac
+	done
+	if [ -n "$blocked" ]; then
+		echo "::error::publish-aur holds $d back, because it depends on$blocked, which this run cannot publish; pushing $d alone would leave its dependency missing from the AUR."
+		state[$d]=failed failed+=("$d")
+		continue
+	fi
+	push+=("$d")
+done
+
+if [ ${#push[@]} -gt 0 ] && [ -z "$dry" ]; then
+	[ -n "${AUR_SSH_KEY-}" ] ||
+		die "AUR_SSH_KEY is unset or empty, so nothing can be pushed to the AUR; the maintainer sets it as a secret of this repository"
+	known_hosts=$top/ci/aur.known_hosts
+	[ -s "$known_hosts" ] || die "ci/aur.known_hosts is missing or empty"
+	eval "$(ssh-agent -s)" >/dev/null
+	trap 'ssh-agent -k >/dev/null 2>&1 || true' EXIT
+	printf '%s\n' "$AUR_SSH_KEY" | ssh-add -q - 2>/dev/null ||
+		die "AUR_SSH_KEY is not a private key that ssh-add can load without a passphrase"
+	echo "publish-aur: offering the key $(ssh-add -l)"
+	export GIT_SSH_COMMAND="ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$known_hosts -o GlobalKnownHostsFile=/dev/null"
+fi
+unset AUR_SSH_KEY
+
+pushed=()
+for d in "${push[@]}"; do
+	echo "::group::aur-publish ${dry:+--dry-run }$d"
+	if ./aur-publish ${dry:+--dry-run} "$d"; then
+		echo "::endgroup::"
+		state[$d]=pushed pushed+=("$d")
+	else
+		echo "::endgroup::"
+		echo "::error::aur-publish $d failed"
+		state[$d]=failed failed+=("$d")
+	fi
+done
+
+# Each recipe that reached the AUR has its dependencies there too.
+for d in "${pushed[@]}"; do
+	for dep in $(local_deps "$d"); do
+		case ${state[$dep]} in
+		current | pushed) ;;
+		*)
+			echo "::error::$d reached the AUR, but its dependency $dep did not, so $dep is missing from the AUR until someone publishes it: run ./aur-publish $dep."
+			failed+=("$d needs $dep")
+			;;
+		esac
+	done
+done
+
+verb=published
+[ -z "$dry" ] || verb="would publish"
+echo "publish-aur: $verb: ${pushed[*]:-none}; AUR history differs: ${diverged[*]:-none}; failed: ${failed[*]:-none}."
+[ ${#failed[@]} = 0 ] || die "the AUR is not up to date: ${failed[*]}"

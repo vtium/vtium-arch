@@ -1,0 +1,1 @@
+vtium moves to v0.1.0-alpha.6 only with _features='images logind gpu bidi' and _hwaccel=on in vtium/PKGBUILD. A person makes that change on the watcher's bump pull request, merges it, and deletes this file in the same pull request.

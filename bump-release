@@ -1,0 +1,154 @@
+#!/bin/bash
+# Moves the release recipes to vtium's newest release, when vtium has
+# published one that is newer than the tag they build.
+#
+#   ./bump-release            find the newest release and bump the recipes
+#   ./bump-release pkgver TAG print the pkgver for TAG, such as 0.1.0alpha.6
+#                             for v0.1.0-alpha.6
+#
+# A release recipe is a directory of this repository whose PKGBUILD sets
+# _tag, the tag of vtium/vtium it builds: vtium, vtium-minspec,
+# vtium-minspec-gpu and vtium-terminfo. They move together, because every
+# console package built from a release depends on vtium-terminfo from the
+# same release, and bump-release refuses to run when their _tag values
+# differ. The -git recipes follow vtium's main branch and have no _tag.
+#
+# bump-release asks GitHub's API for vtium's releases, leaves out drafts,
+# and takes the release whose pkgver pacman's vercmp sorts highest. When
+# that release is not newer than the recipes' _tag, it prints nothing and
+# changes nothing. When it is newer, bump-release rewrites _tag, pkgver and
+# pkgrel=1 in each release recipe, makes each one's .SRCINFO again with
+# makepkg --printsrcinfo, rewrites the tag in the README's table of
+# recipes, and prints these lines, which the watcher in
+# .github/workflows/update.yml reads as its step's outputs:
+#
+#   current=v0.1.0-alpha.5        the tag the recipes built before
+#   tag=v0.1.0-alpha.6            the tag they build now
+#   pkgver=0.1.0alpha.6           its pkgver
+#   prerelease=true               whether GitHub marks the release a pre-release
+#   url=https://github.com/...    the release's page
+#   recipes=vtium vtium-minspec   the recipes it rewrote
+#
+# The pkgver of a tag is the tag without its v and without the hyphen
+# before a pre-release, so that pacman sorts 0.1.0alpha.6 before 0.1.0.
+# bump-release takes only tags of the form vX.Y.Z or vX.Y.Z-pre, where pre
+# starts with a lowercase letter and holds lowercase letters, digits and
+# dots, since pacman's vercmp orders an uppercase label differently. It
+# passes over a release whose tag has any other form, and prints a
+# ::warning:: line about it on stderr, which the watcher shows as a warning
+# on its run. An answer from the API that is not a JSON list of releases
+# fails the run.
+#
+# Environment:
+#   GH_TOKEN             a GitHub token for the API request, when set; the
+#                        API answers fewer requests without one.
+#   VTIUM_RELEASES_JSON  a file that stands in for the API's answer, for
+#                        test-bump-release.
+set -euo pipefail
+
+# Whether a pre-release, such as v0.1.0-alpha.6, moves the release recipes.
+# yes: every new release moves them. no: only a release that GitHub does not
+# mark as a pre-release moves them.
+include_prereleases=yes
+
+repo=vtium/vtium
+
+die() {
+	printf 'bump-release: %s\n' "$*" >&2
+	exit 1
+}
+
+# pkgver_of TAG prints TAG's pkgver, or fails when TAG has another form.
+pkgver_of() {
+	[[ $1 =~ ^v([0-9]+(\.[0-9]+)*)(-([a-z][a-z0-9.]*))?$ ]] || return 1
+	printf '%s%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[4]}"
+}
+
+if [ "${1-}" = pkgver ]; then
+	[ $# = 2 ] || die "usage: bump-release pkgver TAG"
+	pkgver_of "$2" || die "the tag '$2' has neither the form vX.Y.Z nor vX.Y.Z-pre with a lowercase pre"
+	exit 0
+fi
+[ $# = 0 ] || die "usage: bump-release, or bump-release pkgver TAG"
+
+top=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+cd "$top"
+
+# The release recipes, and the one tag they all build.
+mapfile -t recipes < <(grep -l '^_tag=' -- */PKGBUILD | sed 's|/PKGBUILD$||' | LC_ALL=C sort)
+[ ${#recipes[@]} -gt 0 ] || die "no recipe here sets _tag"
+current=
+for r in "${recipes[@]}"; do
+	t=$(sed -n 's/^_tag=//p' "$r/PKGBUILD")
+	[ -z "$current" ] && current=$t
+	[ "$t" = "$current" ] ||
+		die "$r/PKGBUILD builds the tag $t and ${recipes[0]}/PKGBUILD builds $current; the release recipes must build the same tag"
+	want=$(pkgver_of "$t") || die "$r/PKGBUILD builds the tag $t, which has neither the form vX.Y.Z nor vX.Y.Z-pre with a lowercase pre"
+	[ "$(sed -n 's/^pkgver=//p' "$r/PKGBUILD")" = "$want" ] ||
+		die "$r/PKGBUILD builds the tag $t, so its pkgver must be $want"
+done
+current_pkgver=$(pkgver_of "$current")
+
+# vtium's releases, as GitHub's API lists them.
+if [ -n "${VTIUM_RELEASES_JSON-}" ]; then
+	releases=$(cat -- "$VTIUM_RELEASES_JSON")
+else
+	auth=()
+	[ -z "${GH_TOKEN-}" ] || auth=(-H "Authorization: Bearer $GH_TOKEN")
+	releases=$(curl -fsSL "${auth[@]}" -H 'Accept: application/vnd.github+json' \
+		"https://api.github.com/repos/$repo/releases?per_page=100") ||
+		die "GitHub's API did not list the releases of $repo"
+fi
+
+# Each release that is not a draft, as one line of tag, pre-release flag and
+# page. jq fails on an answer that is not a JSON list of releases, such as an
+# error page, and bump-release fails with it, rather than read the answer as
+# no newer release.
+[ -n "${releases//[[:space:]]/}" ] || die "GitHub's API gave an empty answer, which is not a list of releases"
+listed=$(jq -r 'if type == "array" then .[] | select(.draft | not) | [.tag_name, (.prerelease | tostring), .html_url] | @tsv else error("not a list of releases") end' <<<"$releases" 2>&1) ||
+	die "GitHub's API answered with something other than a list of releases: ${listed:0:200}"
+
+# The newest release that qualifies: no draft, and no pre-release unless
+# include_prereleases says so.
+best='' best_pkgver='' best_pre='' best_url=''
+while IFS=$'\t' read -r tag pre url; do
+	[ -n "$tag" ] || continue
+	if [ "$pre" = true ] && [ "$include_prereleases" != yes ]; then
+		continue
+	fi
+	if ! v=$(pkgver_of "$tag"); then
+		printf '::warning::bump-release passes over the release %s, whose tag has neither the form vX.Y.Z nor vX.Y.Z-pre with a lowercase pre\n' "$tag" >&2
+		continue
+	fi
+	if [ -z "$best" ] || [ "$(vercmp "$v" "$best_pkgver")" -gt 0 ]; then
+		best=$tag best_pkgver=$v best_pre=$pre best_url=$url
+	fi
+done <<<"$listed"
+
+[ -n "$best" ] || exit 0
+[ "$(vercmp "$best_pkgver" "$current_pkgver")" -gt 0 ] || exit 0
+
+# The README's table of recipes names the tag in the row of vtium/, and
+# bump-release rewrites it there. It checks for the row before it changes
+# anything, so that it never leaves the recipes moved and the README not.
+# shellcheck disable=SC2016 # the backquotes are Markdown's, not the shell's
+row='^| `vtium/` |.*the tag `[^`]*`'
+grep -q "$row" README.md ||
+	die "README.md has no row for vtium/ that names 'the tag \`...\`', so bump-release cannot rewrite the tag there"
+
+for r in "${recipes[@]}"; do
+	sed -i -e "s/^_tag=.*/_tag=$best/" -e "s/^pkgver=.*/pkgver=$best_pkgver/" \
+		-e 's/^pkgrel=.*/pkgrel=1/' "$r/PKGBUILD"
+	(cd "$r" && env -u VTIUM_GIT_URL -u VTIUM_GIT_BRANCH -u VTIUM_FEATURES makepkg --printsrcinfo >.SRCINFO.new) ||
+		die "makepkg --printsrcinfo failed in $r"
+	mv "$r/.SRCINFO.new" "$r/.SRCINFO"
+done
+
+sed -i "/^| \`vtium\/\` |/s/the tag \`[^\`]*\`/the tag \`$best\`/" README.md
+
+printf 'current=%s\n' "$current"
+printf 'tag=%s\n' "$best"
+printf 'pkgver=%s\n' "$best_pkgver"
+printf 'prerelease=%s\n' "$best_pre"
+printf 'url=%s\n' "$best_url"
+printf 'recipes=%s\n' "${recipes[*]}"

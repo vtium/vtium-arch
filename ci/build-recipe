@@ -1,0 +1,85 @@
+#!/bin/bash
+# Builds one recipe the way a user's makepkg -s does, then lints its
+# packages with namcap. The build workflow, .github/workflows/build.yml,
+# runs it in an archlinux:base-devel container as a user who may run sudo
+# without a password, because makepkg -s installs the recipe's dependencies
+# with pacman.
+#
+#   ci/build-recipe DIR
+#
+# Before it builds DIR, it builds and installs each recipe of this
+# repository that DIR depends on, since no pacman repository carries them:
+# vtium depends on vtium-terminfo, and vtium-git on vtium-terminfo-git. It
+# imports each recipe's keys/pgp/*.asc into the user's keyring, so that
+# makepkg can check the signature of a release's tag.
+#
+# namcap's errors fail the build, apart from those that ci/DIR/.namcap-allow
+# accepts: one extended regular expression to a line, with a comment above
+# it that says why. Blank lines and lines that start with # are comments.
+# The file lives under ci/ rather than in DIR, because aur-publish pushes
+# everything in DIR to the AUR.
+set -euo pipefail
+
+die() {
+	printf 'build-recipe: %s\n' "$*" >&2
+	exit 1
+}
+[ $# = 1 ] || die "usage: ci/build-recipe DIR"
+top=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+cd "$top"
+dir=${1%/}
+[ -f "$dir/PKGBUILD" ] || die "$dir has no PKGBUILD"
+
+import_keys() {
+	local k
+	for k in "$1"/keys/pgp/*.asc; do
+		[ -f "$k" ] || continue
+		gpg --batch --quiet --import "$k"
+	done
+}
+
+# The recipes of this repository that DIR's packages depend on.
+local_deps() {
+	local d
+	while read -r d; do
+		[ -f "$d/PKGBUILD" ] && [ "$d" != "$1" ] && echo "$d"
+	done < <(sed -n 's/^[[:space:]]*depends = \([^<>=:]*\).*/\1/p' "$1/.SRCINFO" | sort -u)
+	return 0
+}
+
+declare -A installed=()
+install_recipe() {
+	local d=$1 dep
+	[ -z "${installed[$d]-}" ] || return 0
+	installed[$d]=1
+	for dep in $(local_deps "$d"); do install_recipe "$dep"; done
+	echo "::group::build and install $d, which ${dir} depends on"
+	import_keys "$d"
+	(cd "$d" && makepkg -si --noconfirm)
+	echo "::endgroup::"
+}
+
+installed[$dir]=1
+for dep in $(local_deps "$dir"); do install_recipe "$dep"; done
+
+echo "::group::build $dir"
+import_keys "$dir"
+(cd "$dir" && makepkg -sf --noconfirm)
+echo "::endgroup::"
+
+# A debug package is left out: each .build-id entry in it is a link into
+# the main package, which namcap reports as dangling.
+mapfile -t pkgs < <(find "$dir" -maxdepth 1 -name '*.pkg.tar.*' ! -name '*-debug-*' | sort)
+[ ${#pkgs[@]} -gt 0 ] || die "makepkg built no package in $dir"
+namcap "${pkgs[@]}" | tee "$dir/namcap.txt"
+allow=ci/$dir/.namcap-allow
+errors=$(grep ' E: ' "$dir/namcap.txt" || true)
+if [ -n "$errors" ] && [ -f "$allow" ]; then
+	errors=$(grep -vE -f <(grep -vE '^[[:space:]]*(#|$)' "$allow") <<<"$errors" || true)
+fi
+if [ -n "$errors" ]; then
+	echo "::error::namcap reported an error that ci/$dir/.namcap-allow does not accept"
+	printf '%s\n' "$errors"
+	exit 1
+fi
+echo "build-recipe: $dir built, and namcap reported no error it does not accept."
