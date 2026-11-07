@@ -123,7 +123,7 @@ for r in "${release_recipes[@]}"; do
 		ok "$r/.SRCINFO builds from the signed tag $new" || fail "$r/.SRCINFO builds from the signed tag $new" "no such source line"
 	grep -q "^pkgrel=" "$r/PKGBUILD" || fail "$r keeps its pkgrel line" "it has none"
 done
-grep -qF "| a release: the tag \`$new\`, checked against the maintainer's signature |" README.md &&
+grep '^| `vtium/` |' README.md | grep -qF "the tag \`$new\`" &&
 	ok "the README's table names $new" || fail "the README's table names $new" "$(grep -F '| `vtium/` |' README.md)"
 changed=$(git status --porcelain | awk '{ print $2 }' | sort | tr '\n' ' ')
 want_changed=$(for r in "${release_recipes[@]}"; do printf '%s/.SRCINFO\n%s/PKGBUILD\n' "$r" "$r"; done | { cat; echo README.md; } | sort | tr '\n' ' ')
