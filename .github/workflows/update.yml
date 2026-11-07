@@ -41,6 +41,25 @@ jobs:
             exit 1
           }
 
+      # git asks this URL before every push, and GitHub answers 200 only to a
+      # token that may push to the repository. A token that may only read it
+      # gets 403, which is how the alpha.6 bump failed: a fine-grained token
+      # whose resource owner was a user and not the vtium organization. The
+      # check runs on every run, so a manual run of the watcher proves a new
+      # token even when vtium has published no new release.
+      - name: Check that the bump token may push
+        env:
+          BUMP_PAT: ${{ secrets.BUMP_PAT }}
+        run: |
+          code=$(printf 'user = "x-access-token:%s"\n' "$BUMP_PAT" |
+            curl -s -o /dev/null -w '%{http_code}' --config - \
+              "https://github.com/$GITHUB_REPOSITORY.git/info/refs?service=git-receive-pack")
+          [ "$code" = 200 ] || {
+            echo "::error::GitHub answered $code when BUMP_PAT asked to push to $GITHUB_REPOSITORY. BUMP_PAT needs a fine-grained token whose resource owner is ${GITHUB_REPOSITORY%%/*}, with Contents and Pull requests set to read and write on this repository, and the organization's approval when it requires one."
+            exit 1
+          }
+          echo "BUMP_PAT may push to $GITHUB_REPOSITORY."
+
   bump:
     needs: preflight
     runs-on: ubuntu-latest
