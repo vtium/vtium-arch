@@ -1,8 +1,14 @@
 #!/bin/bash
-# Tests the messages each console package's install script prints, against a
-# scratch /etc/systemd/system and /var/lib/vtium and a stand-in systemctl,
-# and changes nothing on this machine: each function runs with the script's
-# /etc/systemd and /var/lib/vtium paths rewritten to the scratch root's.
+# Tests what each console package's install script runs and the messages it
+# prints, against a scratch /etc/systemd/system and /var/lib/vtium, a
+# stand-in systemctl and a stand-in vtium, and changes nothing on this
+# machine: each function runs with the script's /etc/systemd and
+# /var/lib/vtium paths rewritten to the scratch root's. The stand-in vtium
+# takes only the words the script may give it, vtium console enable --all
+# and vtium console disable --all, and exits 2 on any others, as the real
+# one does on words it cannot take. It records each call and answers with
+# the output and exit status a case sets: the real vtium console prints its
+# result on standard output, and a refusal on standard error with status 1.
 #
 #   ./test-install-messages
 set -euo pipefail
@@ -12,11 +18,22 @@ tmp=$(mktemp -d)
 trap 'rm -rf -- "$tmp"' EXIT
 fails=0
 
-# run SCRIPT FUNCTION: the function's output, with the scratch root's paths
-# printed as the machine's.
+# run SCRIPT FUNCTION: the function's output, standard error included, with
+# the scratch root's paths printed as the machine's, and then a line
+# "status N" with the function's exit status. pacman runs each function
+# with no set -e.
 run() {
 	sed -e "s|/etc/systemd|$tmp/root/etc/systemd|g" -e "s|/var/lib/vtium|$tmp/root/var/lib/vtium|g" "$1" >"$tmp/inst"
-	PATH=$tmp/bin:$PATH bash -c ". '$tmp/inst'; $2" | sed "s|$tmp/root||g"
+	PATH=$tmp/bin:$PATH bash -c ". '$tmp/inst'; $2; echo \"status \$?\"" 2>&1 | sed "s|$tmp/root||g"
+}
+# calls: the stand-in vtium's calls since the last reset, one a line.
+calls() { cat "$tmp/calls" 2>/dev/null || true; }
+# answer STATUS OUT ERR: what the stand-in vtium console prints on standard
+# output and standard error, and the status it exits with.
+answer() {
+	printf '%s\n' "$1" >"$tmp/vtium-status"
+	printf '%s' "$2" >"$tmp/vtium-out"
+	printf '%s' "$3" >"$tmp/vtium-err"
 }
 # expect CASE OUTPUT WANT...: each WANT is a line OUTPUT holds; a WANT that
 # starts with ! is a line it must not hold.
@@ -33,10 +50,22 @@ expect() {
 	if [ -z "$bad" ]; then echo "ok   $case"; else echo "FAIL $case:$bad"; printf '       %s\n' "${out//$'\n'/$'\n'       }"; fails=$((fails + 1)); fi
 }
 reset() {
-	rm -rf "${tmp:?}/root" "${tmp:?}/bin"
+	rm -rf "${tmp:?}/root" "${tmp:?}/bin" "${tmp:?}/calls"
 	mkdir -p "$tmp/root/etc/systemd/system/getty.target.wants" "$tmp/bin"
 	printf '#!/bin/sh\n' >"$tmp/bin/systemctl"
-	chmod +x "$tmp/bin/systemctl"
+	cat >"$tmp/bin/vtium" <<-EOF
+	#!/bin/bash
+	printf '%s\\n' "\$*" >>'$tmp/calls'
+	case "\$*" in
+	'console enable --all' | 'console disable --all') ;;
+	*) echo "vtium: the install script may not run vtium \$*" >&2; exit 2 ;;
+	esac
+	cat '$tmp/vtium-out'
+	cat '$tmp/vtium-err' >&2
+	exit "\$(cat '$tmp/vtium-status')"
+	EOF
+	chmod +x "$tmp/bin/systemctl" "$tmp/bin/vtium"
+	answer 0 "" ""
 }
 link() { ln -s "/usr/lib/systemd/system/$1" "$tmp/root/etc/systemd/system/$2"; }
 
@@ -68,9 +97,7 @@ for script in "${scripts[@]}"; do
 		"    The kmscon link, for a VT that kmscon served:" \
 		"    VT, with sudo systemctl start getty@ttyN.service. Started while vtium" \
 		"      sudo ln -s /usr/lib/systemd/system/kmsconvt@.service \\" \
-		"    Next time, run sudo vtium console disable --all before you remove vtium's" \
-		"    console package." \
-		"!    Next time, run sudo vtium console disable --all before pacman -R vtium." \
+		"!    Next time, run sudo vtium console disable --all before you remove vtium's" \
 		"!    install vtium again, run sudo vtium console disable --all, then remove it."
 
 	# vtium console's records outlive the package, and the message names the
@@ -96,52 +123,110 @@ for script in "${scripts[@]}"; do
 		"!      sudo rm /etc/systemd/system/autovt@.service" \
 		"!      sudo systemctl preset getty@.service"
 
+	# A first install claims the free VTs with vtium console enable --all,
+	# and shows what it said, wrapped to fit 78 columns.
 	reset
-	expect "$name: install says nothing is on, and points at vtium console and kmscon's sharing" "$(run "$script" post_install)" \
-		"==> vtium runs on no VT until you turn it on, the same as the kmscon package." \
-		"      sudo vtium console enable 3" \
-		"      sudo vtium console enable --all" \
+	answer 0 "vtium is enabled on every VT from its next start: systemd starts it on VT 1 at the next boot, and logind starts it on each other VT when you switch to it while nothing runs there." ""
+	out=$(run "$script" post_install)
+	expect "$name: a first install claims the free VTs and says what vtium console did" "$out" \
+		"==> vtium now runs on every free VT. vtium console enable --all said:" \
+		"      vtium is enabled on every VT from its next start: systemd starts it on" \
+		"    Nothing was started now. Each VT starts vtium from its next start: VT 1" \
 		"      sudo vtium console disable --all" \
+		"      sudo vtium console enable 3" \
 		"      https://github.com/vtium/vtium-arch#sharing-vts-with-kmscon" \
+		"status 0" \
+		"!==> vtium claimed no VT: vtium console enable --all stopped, and said:" \
 		"!      sudo systemctl enable vtium@tty3.service"
+	# check CASE CONDITION OUTPUT: a case that passes when CONDITION, a
+	# command, succeeds, and shows OUTPUT when it fails.
+	check() { if eval "$2"; then echo "ok   $1"; else echo "FAIL $1:"; printf '       %s\n' "${3//$'\n'/$'\n'       }"; fails=$((fails + 1)); fi; }
+	check "$name: a first install runs vtium console enable --all and nothing else" '[ "$(calls)" = "console enable --all" ]' "$(calls)"
+	check "$name: no line of the install message is longer than 78 columns" '! awk "length > 78" <<<"$out" | grep -q .' "$out"
 
-	# Installed in place of another vtium console package, which pacman
-	# removed through the conflicts, the package finds the links that one
-	# left, says the VTs stay vtium's, and does not say vtium runs on no VT.
+	# A refused claim never fails the install: it says that vtium claimed no
+	# VT, gives vtium console's own reason, and names the command to run once
+	# the reason is gone. Each refusal the record names is one case.
+	for why in "kmscon holds the template link /etc/systemd/system/autovt@.service, so logind starts kmscon on every VT. To move from kmscon, see the guide." \
+		"vtium cannot tell which VTs graphics hold: loginctl list-sessions --no-legend failed: Failed to connect to bus." \
+		"this host was not booted with systemd: /run/systemd/system is missing."; do
+		reset
+		answer 1 "" "vtium console enable --all: $why"
+		out=$(run "$script" post_install)
+		expect "$name: a refused claim (${why%% *}) says so and the install succeeds" "$out" \
+			"==> vtium claimed no VT: vtium console enable --all stopped, and said:" \
+			"      $(printf '%s' "vtium console enable --all: $why" | fold -s -w 72 | head -n1 | sed 's/ *$//')" \
+			"    The package is installed all the same. Once the reason is gone, run this" \
+			"      sudo vtium console enable --all" \
+			"      https://github.com/vtium/vtium-arch#sharing-vts-with-kmscon" \
+			"status 0" \
+			"!      sudo vtium console disable --all" \
+			"!==> vtium now runs on every free VT. vtium console enable --all said:"
+	done
+	# Any failure of vtium itself is a refused claim too.
+	reset
+	answer 101 "" "thread 'main' panicked"
+	expect "$name: a vtium that crashes during the claim fails no install" "$(run "$script" post_install)" \
+		"==> vtium claimed no VT: vtium console enable --all stopped, and said:" "status 0"
+
+	# Installed in place of another vtium console package whose removal could
+	# not give its VTs back, or beside links made by hand, the package finds
+	# the links, says the VTs stay vtium's, and claims no other VT.
 	reset
 	link vtium@.service autovt@tty3.service
 	link vtium@.service getty.target.wants/vtium@tty3.service
-	expect "$name: install in place of another console names the VTs vtium keeps" "$(run "$script" post_install)" \
-		"==> vtium already holds VTs on this machine, through these links, which the" \
+	expect "$name: install where vtium holds VTs already names them and claims no more" "$(run "$script" post_install)" \
+		"==> vtium already holds VTs on this machine, through these links, which an" \
 		"      /etc/systemd/system/autovt@tty3.service" \
 		"      /etc/systemd/system/getty.target.wants/vtium@tty3.service" \
-		"    vtium's and you do not need to change anything:" \
-		"!==> vtium runs on no VT until you turn it on, the same as the kmscon package." \
+		"    vtium no other VT. You do not need to change anything:" \
+		"status 0" \
+		"!==> vtium now runs on every free VT. vtium console enable --all said:" \
 		"!==> No running vtium was restarted: a restart ends every session on its VT."
+	expect "$name: install where vtium holds VTs already runs no vtium console" "$(calls)" "!console enable --all"
 	printf '#!/bin/sh\nprintf "vtium@tty3.service loaded active running vtium on tty3\\n"\n' >"$tmp/bin/systemctl"
-	expect "$name: install in place of another console names the VTs that still run the old build" "$(run "$script" post_install)" \
-		"==> vtium already holds VTs on this machine, through these links, which the" \
+	expect "$name: install where vtium holds VTs names the VTs that still run the old build" "$(run "$script" post_install)" \
+		"==> vtium already holds VTs on this machine, through these links, which an" \
 		"==> No running vtium was restarted: a restart ends every session on its VT." \
-		"    These still run the build they started with:" "      vtium@tty3.service" \
-		"!    No link gives vtium these VTs at their next start, so each goes back to" \
-		"!==> vtium runs on no VT until you turn it on, the same as the kmscon package."
+		"    These still run the build they started with:" "      vtium@tty3.service"
 	rm "$tmp/root/etc/systemd/system/autovt@tty3.service" "$tmp/root/etc/systemd/system/getty.target.wants/vtium@tty3.service"
-	expect "$name: install while vtium runs with no link names the running VT" "$(run "$script" post_install)" \
+	expect "$name: install while vtium runs with no link claims the free VTs and names the running VT" "$(run "$script" post_install)" \
+		"==> vtium now runs on every free VT. vtium console enable --all said:" \
 		"==> No running vtium was restarted: a restart ends every session on its VT." \
 		"      vtium@tty3.service" \
-		"    No link gives vtium these VTs at their next start, so each goes back to" \
-		"      sudo vtium console enable 3" \
-		"!==> vtium already holds VTs on this machine, through these links, which the" \
-		"!==> vtium runs on no VT until you turn it on, the same as the kmscon package."
+		"!==> vtium already holds VTs on this machine, through these links, which an"
 
-	# An upgrade names the VTs whose vtium still runs the old build.
+	# An upgrade claims nothing and names the VTs whose vtium still runs the
+	# old build.
 	reset
 	printf '#!/bin/sh\nprintf "vtium@tty3.service loaded active running vtium on tty3\\n"\n' >"$tmp/bin/systemctl"
 	expect "$name: an upgrade names the running VTs" "$(run "$script" post_upgrade)" \
-		"    These still run the build they started with:" "      vtium@tty3.service"
+		"    These still run the build they started with:" "      vtium@tty3.service" "status 0"
+	expect "$name: an upgrade runs no vtium console" "$(calls)" "!console enable --all" "!console disable --all"
+
+	# A removal gives the VTs back with vtium console disable --all before the
+	# package's files go, and says what vtium console did.
+	reset
+	answer 0 "vtium is disabled on every VT it was given. Each VT gets back what it had." ""
+	expect "$name: a removal gives the VTs back" "$(run "$script" pre_remove)" \
+		"==> vtium gave the VTs back. vtium console disable --all said:" \
+		"      vtium is disabled on every VT it was given. Each VT gets back what it" \
+		"    package, that package gives vtium the free VTs again when it installs." \
+		"status 0" \
+		"!==> vtium gave no VT back: vtium console disable --all stopped, and said:"
+	expect "$name: a removal runs vtium console disable --all" "$(calls)" "console disable --all" "!console enable --all"
+	# A refused give-back never fails the removal.
+	answer 1 "" "vtium console disable --all: this host was not booted with systemd: /run/systemd/system is missing."
+	expect "$name: a refused give-back says so and the removal succeeds" "$(run "$script" pre_remove)" \
+		"==> vtium gave no VT back: vtium console disable --all stopped, and said:" \
+		"      vtium console disable --all: this host was not booted with systemd:" \
+		"    The package is removed all the same. pacman lists the links to vtium" \
+		"status 0"
 
 	# A removal while vtium runs names the running VTs, and says a VT has no
 	# console unit only while a link to vtium@.service is left.
+	reset
+	printf '#!/bin/sh\nprintf "vtium@tty3.service loaded active running vtium on tty3\\n"\n' >"$tmp/bin/systemctl"
 	expect "$name: a removal while vtium runs, with no link left, names the VT and no missing unit" "$(run "$script" pre_remove)" \
 		"      vtium@tty3.service" \
 		"    sudo systemctl stop vtium@ttyN.service stops one, which ends every" \

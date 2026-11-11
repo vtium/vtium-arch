@@ -20,6 +20,33 @@ The four minspec recipes are never published on the AUR, because they are build 
 
 The maintainer signs each release tag, and makepkg refuses to build a release recipe until the tag's signature checks out against the key in `validpgpkeys`. Each release recipe carries that key in `keys/pgp/`, so import it once with `gpg --import vtium/keys/pgp/*.asc`. A release recipe's `pkgver` is its tag without the `v` and without the hyphen before a pre-release, so `v0.1.0-alpha.6` is `0.1.0alpha.6`, which pacman sorts before `0.1.0`.
 
+## What a console package does to your VTs
+
+A VT, or virtual terminal, is one of the full-screen text screens the Linux kernel keeps beside a desktop. When you first install a console package, its install script runs `vtium console enable --all`. That gives vtium every free VT, which is every VT that no display manager, greeter, graphical session or kmscon holds. With no display manager enabled, vtium runs on VT 1 from the next boot in place of its getty. On the other free VTs, logind starts vtium the first time you switch to one. The script starts nothing now, so the change takes effect at each VT's next start. The install message shows what `vtium console` did, and names each VT it left alone and why.
+
+`vtium console` refuses to change anything while kmscon holds the template link `/etc/systemd/system/autovt@.service`, while `loginctl` cannot say which sessions run, and on a machine not booted with systemd, such as a chroot. The install still succeeds. Its message then says that vtium claimed no VT, gives the reason, and names the command to run once the reason is gone, `sudo vtium console enable --all`. An upgrade changes no VT.
+
+You can choose otherwise at any time:
+
+```sh
+vtium console status                  # what each VT runs
+sudo vtium console disable --all      # take every VT back
+sudo vtium console enable 3           # then give vtium VT 3 alone
+sudo systemctl start vtium@tty3.service
+```
+
+The `systemctl start` line starts vtium on VT 3 now, and stops the getty there. Run it from another VT or over ssh, once no session on VT 3 needs to survive. vtium's [install guide](https://github.com/vtium/vtium/blob/main/docs/install.md#giving-vtium-a-vt) gives the full rules.
+
+### Sharing VTs with kmscon
+
+kmscon and vtium can each keep VTs of their own on one machine. A VT's own link, `/etc/systemd/system/autovt@ttyN.service`, wins over the template link. `vtium console enable N` refuses a VT that kmscon holds, so to give that VT to vtium, disable `kmsconvt@ttyN` there first. To give kmscon back a VT that vtium holds, run `sudo vtium console disable N` and then link the VT to kmscon. To move from kmscon to vtium on every VT, take the template link back from kmscon, then run `sudo vtium console enable --all`. vtium's install guide gives each step, in [Sharing VTs with kmscon](https://github.com/vtium/vtium/blob/main/docs/install.md#sharing-vts-with-kmscon) and [Moving from another DRM/KMS VT](https://github.com/vtium/vtium/blob/main/docs/install.md#moving-from-another-drmkms-vt).
+
+### Removing vtium
+
+Before the package's files go, its removal script runs `vtium console disable --all`, which gives back the template link and the gettys that the claim took. It stops nothing, so a vtium that runs keeps its VT until it stops or the machine restarts. The removal message names each vtium that still runs. pacman removes a console package that another one replaces in the same way, so the new package then claims the free VTs again when it installs.
+
+When `vtium console disable --all` cannot give a VT back, the removal still succeeds, and the message at its end names each link to `vtium@.service` that is left. A left link names a unit that no longer exists, so logind starts nothing on that VT. For each link, the message gives the `sudo rm` line that removes it, and the line that enables that VT's getty at boot again. Then run `sudo systemctl daemon-reload`.
+
 ## How a new release reaches the AUR
 
 The watcher, `.github/workflows/update.yml`, looks for a new vtium release every day, and at once when vtium sends this repository a `repository_dispatch` event of type `vtium-release`. When vtium has published a release newer than the tag the release recipes build, `./bump-release` moves `vtium`, `vtium-minspec`, `vtium-minspec-gpu` and `vtium-terminfo` to that tag together, and the watcher opens a pull request from the branch `bump/vtium-release` and queues it to merge. It takes pre-releases too, while `bump-release` sets `include_prereleases=yes`. The build, `.github/workflows/build.yml`, builds every recipe in a clean Arch container for each pull request, lints the packages with namcap, and runs `aur-publish --dry-run` and the tests. Its check `gate`, which main's branch rule requires, lets the pull request merge. On main, the build's job `publish` compares each published recipe with its AUR repository and runs `aur-publish` for each one the AUR is behind on or does not have yet, so a run publishes what an earlier run missed. The consoles go first and `vtium-fonts` and the terminfo recipes after them, and `publish` pushes no console whose terminfo recipe cannot follow it in the same run. The watcher needs the secret `BUMP_PAT` and publishing needs the secret `AUR_SSH_KEY`, and each job stops with an error when its secret is missing.
