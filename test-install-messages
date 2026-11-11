@@ -27,7 +27,8 @@ fails=0
 # "status N" with the function's exit status. pacman runs each function
 # with no set -e.
 run() {
-	sed -e "s|/etc/systemd|$tmp/root/etc/systemd|g" -e "s|/var/lib/vtium|$tmp/root/var/lib/vtium|g" "$1" >"$tmp/inst"
+	sed -e "s|/etc/systemd|$tmp/root/etc/systemd|g" -e "s|/var/lib/vtium|$tmp/root/var/lib/vtium|g" \
+		-e "s|\[ -e /usr/lib/systemd/system/|[ -e $tmp/root/usr/lib/systemd/system/|g" "$1" >"$tmp/inst"
 	PATH=$tmp/bin:$PATH bash -c ". '$tmp/inst'; $2; echo \"status \$?\"" 2>&1 | sed "s|$tmp/root||g"
 }
 # calls: the stand-in vtium's calls since the last reset, one a line.
@@ -72,6 +73,9 @@ reset() {
 	answer 0 "" ""
 }
 link() { ln -s "/usr/lib/systemd/system/$1" "$tmp/root/etc/systemd/system/$2"; }
+# ships UNIT: the package ships UNIT, as the script's test [ -e
+# /usr/lib/systemd/system/UNIT ], which run points at the scratch root, sees.
+ships() { mkdir -p "$tmp/root/usr/lib/systemd/system" && : >"$tmp/root/usr/lib/systemd/system/$1"; }
 
 # Every console package's install script.
 scripts=("$here"/*/*.install)
@@ -190,7 +194,9 @@ for script in "${scripts[@]}"; do
 		"==> vtium already holds VTs on this machine, through these links, which an" \
 		"      /etc/systemd/system/autovt@tty3.service" \
 		"      /etc/systemd/system/getty.target.wants/vtium@tty3.service" \
+		"    earlier install of vtium left. They name vtium's units, which this" \
 		"    vtium no other VT:" \
+		"!    package does not ship, so the VTs they name have no console unit:" \
 		"status 0" \
 		"!==> vtium now holds every free VT in direct mode. vtium console enable" \
 		"!==> No running vtium was restarted: a restart ends every session on its VT."
@@ -231,12 +237,36 @@ for script in "${scripts[@]}"; do
 		"      sudo systemctl add-wants getty.target getty@tty4.service" \
 		"      sudo rm /etc/systemd/system/getty.target.wants/vtium@tty2.service" \
 		"      sudo systemctl add-wants getty.target getty@tty2.service"
+	# A package that ships seat mode's unit keeps those VTs vtium's.
+	ships vtium@.service
+	ships vtium-seat@.service
 	expect "$name: install where vtium holds a VT in seat mode names its links and claims no more" "$(run "$script" post_install)" \
 		"==> vtium already holds VTs on this machine, through these links, which an" \
+		"    earlier install of vtium left. They name vtium's units, which this" \
 		"      /etc/systemd/system/autovt@tty4.service" \
 		"      /etc/systemd/system/getty.target.wants/vtium-seat@tty4.service" \
+		"!    package does not ship, so the VTs they name have no console unit:" \
 		"!==> vtium now holds every free VT in direct mode. vtium console enable"
 	check "$name: install where vtium holds a VT in seat mode runs no vtium console" '[ -z "$(calls)" ]' "$(calls)"
+	# A package that does not ship seat mode's unit, as a minspec package
+	# does not, says that the VTs its links name have no console unit, and
+	# names direct mode as the way to give them to vtium.
+	rm "$tmp/root/usr/lib/systemd/system/vtium-seat@.service"
+	out=$(run "$script" post_install)
+	expect "$name: install without seat mode's unit says the seat-mode VTs have no console unit" "$out" \
+		"==> vtium already holds VTs on this machine, through links that an earlier" \
+		"    These links name vtium@.service, which this package installs, so those" \
+		"      /etc/systemd/system/autovt@tty2.service" \
+		"    These links name seat mode's unit, vtium-seat@.service, which this" \
+		"    package does not ship, so the VTs they name have no console unit:" \
+		"      /etc/systemd/system/autovt@tty4.service" \
+		"      /etc/systemd/system/getty.target.wants/vtium-seat@tty4.service" \
+		"      sudo vtium console enable --direct N" \
+		"      sudo vtium console enable --direct --all" \
+		"status 0" \
+		"!    earlier install of vtium left. They name vtium's units, which this"
+	check "$name: no line of the message without seat mode's unit is longer than 78 columns" '! awk "length > 78" <<<"$out" | grep -q .' "$out"
+	check "$name: install without seat mode's unit runs no vtium console" '[ -z "$(calls)" ]' "$(calls)"
 	printf '#!/bin/sh\nprintf "vtium-seat@tty4.service loaded active running vtium on tty4\\n"\n' >"$tmp/bin/systemctl"
 	expect "$name: an upgrade names a running vtium in seat mode" "$(run "$script" post_upgrade)" \
 		"    These still run the build they started with:" "      vtium-seat@tty4.service"
@@ -271,9 +301,14 @@ for script in "${scripts[@]}"; do
 	expect "$name: the note at an upgrade names only the VTs nothing holds at boot" "$(run "$script" post_upgrade)" \
 		"==> vtium does not start at boot on VT 5. It holds it through the template" \
 		"      sudo vtium console enable --direct --all"
-	# In seat mode the command names seat mode.
+	# In seat mode the command names seat mode, from a package that ships
+	# seat mode's unit. From one that does not, --seat cannot run, so the
+	# note is left out.
 	rm "$tmp/root/etc/systemd/system/autovt@.service"
 	link vtium-seat@.service autovt@.service
+	expect "$name: the note at an upgrade without seat mode's unit leaves out --seat" "$(run "$script" post_upgrade)" \
+		"!      sudo vtium console enable --seat --all" "status 0"
+	ships vtium-seat@.service
 	expect "$name: the note at an upgrade in seat mode names seat mode" "$(run "$script" post_upgrade)" \
 		"      sudo vtium console enable --seat --all" \
 		"!      sudo vtium console enable --direct --all"
