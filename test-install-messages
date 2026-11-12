@@ -77,6 +77,11 @@ link() { ln -s "/usr/lib/systemd/system/$1" "$tmp/root/etc/systemd/system/$2"; }
 # /usr/lib/systemd/system/UNIT ], which run points at the scratch root, sees.
 ships() { mkdir -p "$tmp/root/usr/lib/systemd/system" && : >"$tmp/root/usr/lib/systemd/system/$1"; }
 
+# The install script of vtium 0.1.0alpha.6, the release before the claim,
+# as the AUR published it from this repository's main at dea4e5f. pacman
+# runs its removal script when a package from this branch replaces it.
+git -C "$here" show dea4e5f:vtium/vtium.install >"$tmp/alpha6.install"
+
 # Every console package's install script.
 scripts=("$here"/*/*.install)
 for script in "${scripts[@]}"; do
@@ -278,15 +283,17 @@ for script in "${scripts[@]}"; do
 	expect "$name: a want at boot in seat mode alone is still a link to vtium" "$(run "$script" post_remove)" \
 		"      sudo rm /etc/systemd/system/getty.target.wants/vtium-seat@tty4.service"
 
-	# An upgrade on a machine where vtium holds the VTs through the template
-	# link alone, as an install before vtium started at boot left it, says
-	# which VTs from 2 to 5 nothing holds open at boot and names the command
-	# that starts vtium at boot on them. It changes no VT.
+	# An upgrade on a machine where vtium holds VTs 2 to 5 through the template
+	# link alone, with a link of its own on another VT, as ADR-1500 D3's
+	# earlier hand-typed steps left it, says which VTs from 2 to 5 nothing
+	# holds open at boot and names the command that starts vtium at boot on
+	# them. It changes no VT.
 	reset
 	link vtium@.service autovt@.service
-	link getty@.service getty.target.wants/getty@tty1.service
+	link vtium@.service autovt@tty1.service
+	link vtium@.service getty.target.wants/vtium@tty1.service
 	out=$(run "$script" post_upgrade)
-	expect "$name: an upgrade of a machine claimed through the template link alone says vtium does not start at boot" "$out" \
+	expect "$name: an upgrade of a machine claimed through the template link and VT 1 says vtium does not start at boot" "$out" \
 		"==> vtium does not start at boot on VTs 2, 3, 4, and 5. It holds them through" \
 		"      sudo vtium console enable --direct --all" \
 		"status 0"
@@ -313,24 +320,112 @@ for script in "${scripts[@]}"; do
 		"      sudo vtium console enable --seat --all" \
 		"!      sudo vtium console enable --direct --all"
 	# A machine claimed with a want at boot on each VT from 2 to 5 gets no
-	# note.
+	# note, and neither the upgrade nor an install there runs vtium console.
 	reset
 	link vtium@.service autovt@.service
 	for n in 2 3 4 5; do link vtium@.service "getty.target.wants/vtium@tty$n.service"; done
 	expect "$name: an upgrade of a machine claimed with wants at boot says nothing of the boot" "$(run "$script" post_upgrade)" \
 		"!      sudo vtium console enable --direct --all" "status 0"
+	check "$name: an upgrade over the template link and wants at boot runs no vtium console" '[ -z "$(calls)" ]' "$(calls)"
+	expect "$name: install over the template link and wants at boot claims no more" "$(run "$script" post_install)" \
+		"==> vtium already holds VTs on this machine, through these links, which an" \
+		"!==> This install gives vtium the free VTs, so that vtium starts at boot on" "status 0"
+	check "$name: install over the template link and wants at boot runs no vtium console" '[ -z "$(calls)" ]' "$(calls)"
 	# Nor does a machine whose template link is not vtium's.
 	reset
 	link getty@.service autovt@.service
 	expect "$name: an upgrade of a machine vtium does not hold says nothing of the boot" "$(run "$script" post_upgrade)" \
 		"!      sudo vtium console enable --direct --all" "status 0"
-	# The install over links an earlier install left gives the same note.
+	# The install over the template link and VT 1's links gives the same note.
 	reset
 	link vtium@.service autovt@.service
-	expect "$name: install over a template link alone says vtium does not start at boot" "$(run "$script" post_install)" \
+	link vtium@.service autovt@tty1.service
+	expect "$name: install over the template link and VT 1's link says vtium does not start at boot" "$(run "$script" post_install)" \
 		"==> vtium already holds VTs on this machine, through these links, which an" \
 		"==> vtium does not start at boot on VTs 2, 3, 4, and 5. It holds them through" \
-		"      sudo vtium console enable --direct --all"
+		"      sudo vtium console enable --direct --all" \
+		"!==> This install gives vtium the free VTs, so that vtium starts at boot on"
+	check "$name: install over the template link and VT 1's link runs no vtium console" '[ -z "$(calls)" ]' "$(calls)"
+
+	# The template link to vtium@.service and no other link to vtium, as an
+	# install from before the claim left it, as on padnoir: VT 1 is the
+	# display manager's getty. An upgrade or an install there runs the claim
+	# once, says why, and shows what vtium console said.
+	migrated=(
+		"==> This install gives vtium the free VTs, so that vtium starts at boot on"
+		"    them. A free VT is one that no display manager or other program holds."
+		"    The install found the link autovt@.service, which an earlier version of"
+		"==> vtium now holds every free VT in direct mode. vtium console enable"
+		"      vtium is enabled in direct mode on every VT from its next start."
+		"!==> vtium does not start at boot on VTs 2, 3, 4, and 5. It holds them through"
+		"!==> vtium already holds VTs on this machine, through these links, which an"
+		"status 0"
+	)
+	template_only() {
+		reset
+		link vtium@.service autovt@.service
+		link getty@.service autovt@tty1.service
+		link getty@.service getty.target.wants/getty@tty1.service
+		answer 0 "vtium is enabled in direct mode on every VT from its next start. systemd starts it at boot on VTs 2, 3, 4, 5, and 6, so it holds each of them open from boot." ""
+	}
+	for fn in post_upgrade post_install; do
+		template_only
+		out=$(run "$script" $fn)
+		expect "$name: $fn over the template link alone claims the free VTs once" "$out" "${migrated[@]}"
+		check "$name: $fn over the template link alone runs vtium console enable --direct --all once" '[ "$(calls)" = "console enable --direct --all" ]' "$(calls)"
+		check "$name: no line of $fn's message over the template link alone is longer than 78 columns" '! awk "length > 78" <<<"$out" | grep -q .' "$out"
+		# A refused claim there says so, and the install still succeeds.
+		template_only
+		answer 1 "" "vtium console enable --direct --all: this host was not booted with systemd: /run/systemd/system is missing."
+		expect "$name: $fn over the template link alone says when the claim is refused" "$(run "$script" $fn)" \
+			"==> This install gives vtium the free VTs, so that vtium starts at boot on" \
+			"==> vtium claimed no VT: vtium console enable --direct --all stopped, and" \
+			"      sudo vtium console enable --direct --all" "status 0"
+	done
+	# The template link alone in seat mode is not the earlier install's, which
+	# knew no seat mode, so the upgrade keeps its note and claims nothing.
+	reset
+	ships vtium-seat@.service
+	link vtium-seat@.service autovt@.service
+	expect "$name: an upgrade over seat mode's template link alone claims nothing" "$(run "$script" post_upgrade)" \
+		"      sudo vtium console enable --seat --all" \
+		"!==> This install gives vtium the free VTs, so that vtium starts at boot on"
+	check "$name: an upgrade over seat mode's template link alone runs no vtium console" '[ -z "$(calls)" ]' "$(calls)"
+
+	# pacman replaces vtium 0.1.0alpha.6 by running its removal script, and
+	# then this package's post_install. That removal script ran no vtium
+	# console and removed no link, so the template link is still there, and
+	# this package claims the free VTs once.
+	template_only
+	out=$(run "$tmp/alpha6.install" pre_remove; run "$tmp/alpha6.install" post_remove)
+	check "$name: the removal script of vtium 0.1.0alpha.6 runs no vtium console" '[ -z "$(calls)" ]' "$(calls)"
+	expect "$name: the removal script of vtium 0.1.0alpha.6 leaves the template link" "$out" "      sudo rm /etc/systemd/system/autovt@.service"
+	out=$(run "$script" post_install)
+	expect "$name: install in place of vtium 0.1.0alpha.6 claims the free VTs once" "$out" "${migrated[@]}"
+	check "$name: install in place of vtium 0.1.0alpha.6 runs vtium console enable --direct --all once" '[ "$(calls)" = "console enable --direct --all" ]' "$(calls)"
+
+	# vtium console disable --all moves the template link back to what its
+	# record names, here the getty, or removes it when the record or the
+	# template below /etc says so (vtium's console.rs, disable_all). A user
+	# who gave the VTs back that way has no template link to vtium, so an
+	# upgrade changes no VT, and an install claims as a first install does.
+	for back in getty none; do
+		template_only
+		answer 0 "vtium is disabled on every VT it was given. Each VT gets back what it had." ""
+		run "$script" pre_remove >/dev/null
+		rm "$tmp/root/etc/systemd/system/autovt@.service"
+		[ "$back" = none ] || link getty@.service autovt@.service
+		rm -f "$tmp/calls"
+		expect "$name: an upgrade after disable --all ($back) claims nothing" "$(run "$script" post_upgrade)" \
+			"!==> This install gives vtium the free VTs, so that vtium starts at boot on" "status 0"
+		check "$name: an upgrade after disable --all ($back) runs no vtium console" '[ -z "$(calls)" ]' "$(calls)"
+		answer 0 "vtium is enabled in direct mode on every VT from its next start." ""
+		expect "$name: install after disable --all ($back) claims as a first install does" "$(run "$script" post_install)" \
+			"==> vtium now holds every free VT in direct mode. vtium console enable" \
+			"!==> This install gives vtium the free VTs, so that vtium starts at boot on" \
+			"!==> vtium already holds VTs on this machine, through these links, which an" "status 0"
+		check "$name: install after disable --all ($back) runs vtium console enable --direct --all once" '[ "$(calls)" = "console enable --direct --all" ]' "$(calls)"
+	done
 
 	# A removal gives the VTs back with vtium console disable --all before the
 	# package's files go, and says what vtium console did.
