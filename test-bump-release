@@ -283,8 +283,19 @@ fi
 
 # bump-release git-recipes moves the -git recipes to the tag the release
 # recipes build now, and leaves the release recipes and the README alone.
-git reset -q --hard "$base"
-git clean -qfdx
+# old_git_recipes resets the clone and moves every -git recipe back to an
+# old pkgver, so that a case tests a move whatever pkgver this repository's
+# -git recipes have.
+old_git_recipes() {
+	git reset -q --hard "$base"
+	git clean -qfdx
+	for r in "${git_recipes[@]}"; do
+		sed -i 's/^pkgver=.*/pkgver=0.0.1.r0.g0000000/' "$r/PKGBUILD"
+		(cd "$r" && makepkg --printsrcinfo >.SRCINFO)
+	done
+	git commit -q -am "the -git recipes at an old pkgver"
+}
+old_git_recipes
 out=$(./bump-release git-recipes)
 start_git=$(own_pkgver vtium-git "$start")
 want="git_pkgver=$start_git
@@ -307,7 +318,7 @@ out=$(./bump-release git-recipes)
 # A -git recipe whose pkgver is already newer than the tag's, such as one a
 # maintainer's makepkg wrote after a build from main, keeps it.
 ahead=$start_pkgver.r12.gabcdef0
-git reset -q --hard "$base"
+old_git_recipes
 sed -i "s/^pkgver=.*/pkgver=$ahead/" vtium-git/PKGBUILD
 (cd vtium-git && makepkg --printsrcinfo >.SRCINFO)
 git commit -q -am "vtium-git ahead of $start"
