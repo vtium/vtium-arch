@@ -1,10 +1,11 @@
 name: watch vtium's releases
 
 # The watcher. When vtium publishes a release newer than the tag the release
-# recipes build, it moves the four release recipes to that release in one
-# pull request (./bump-release), and queues the pull request to merge once
-# build.yml's gate passes. build.yml then publishes the recipes to the AUR
-# from main.
+# recipes build, it moves the five release recipes to that release in one
+# pull request (./bump-release). The same pull request moves the static
+# pkgver of the -git recipes to that release. The watcher queues the pull
+# request to merge once build.yml's gate passes. build.yml then publishes
+# the recipes to the AUR from main.
 on:
   schedule:
     - cron: '23 5 * * *'
@@ -149,7 +150,7 @@ jobs:
           title: "vtium ${{ steps.up.outputs.tag }}"
           commit-message: "bump: the release recipes build vtium ${{ steps.up.outputs.tag }}, in place of ${{ steps.up.outputs.current }}"
           body: |
-            vtium published the release [${{ steps.up.outputs.tag }}](${{ steps.up.outputs.url }})${{ steps.up.outputs.prerelease == 'true' && ', a pre-release,' || '' }} and the release recipes built ${{ steps.up.outputs.current }}. The watcher (`.github/workflows/update.yml`, which runs `./bump-release`) moves the recipes ${{ steps.up.outputs.recipes }} to the tag `${{ steps.up.outputs.tag }}`, as pkgver `${{ steps.up.outputs.pkgver }}` and pkgrel 1, makes each one's `.SRCINFO` again, and rewrites the tag in the README's table.
+            vtium published the release [${{ steps.up.outputs.tag }}](${{ steps.up.outputs.url }})${{ steps.up.outputs.prerelease == 'true' && ', a pre-release,' || '' }} and the release recipes built ${{ steps.up.outputs.current }}. The watcher (`.github/workflows/update.yml`, which runs `./bump-release`) moves the recipes ${{ steps.up.outputs.recipes }} to the tag `${{ steps.up.outputs.tag }}`, as pkgver `${{ steps.up.outputs.pkgver }}` and pkgrel 1, makes each one's `.SRCINFO` again, and rewrites the tag in the README's table.${{ steps.up.outputs.git_recipes && format(' It also moves the static pkgver of the -git recipes {0} to `{1}`, the version their `pkgver()` prints for a build of the tag''s commit, so the AUR shows them at the new release and a build from a later commit on main sorts after it.', steps.up.outputs.git_recipes, steps.up.outputs.git_pkgver) || '' }}
 
             build.yml builds every recipe from the new tag, checks the tag's signature against each recipe's `validpgpkeys`, and runs `aur-publish --dry-run` for each recipe. The watcher queues this pull request to merge once that build's gate passes, unless a recipe opts out with `ci/<recipe>/.no-auto-merge`. After the merge, build.yml on main publishes the recipes the AUR is behind on. A commit pushed onto this pull request stays: the watcher leaves a bump pull request alone once it carries a commit the watcher did not write.
 

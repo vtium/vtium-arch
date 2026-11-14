@@ -27,6 +27,7 @@ fail() {
 }
 
 release_recipes=(vtium vtium-fonts vtium-minspec vtium-minspec-gpu vtium-terminfo)
+git_recipes=(vtium-git vtium-minspec-git vtium-minspec-gpu-git vtium-terminfo-git)
 
 # The clone, with the working copy's bump-release committed in it, so a
 # change to the script is tested before it is committed.
@@ -38,6 +39,32 @@ git commit -q --allow-empty -m "the bump-release under test"
 base=$(git rev-parse HEAD)
 start=$(sed -n 's/^_tag=//p' vtium/PKGBUILD)
 start_pkgver=$(./bump-release pkgver "$start")
+
+# A stand-in for vtium's repository: one commit for each tag the cases
+# name, each tagged with an annotated tag, as vtium tags its releases.
+# VTIUM_TAG_COMMITS stands in for the API's answer to which commit a tag
+# names, and lists the same commits, so a case can run a -git recipe's own
+# pkgver() in this repository and compare its answer with bump-release's.
+git init -q "$tmp/vtium"
+for tag in "$start" v9.0.0-alpha.1 v0.1.0 v0.1.0-alpha.10; do
+	git -C "$tmp/vtium" commit -q --allow-empty -m "the commit of $tag"
+	git -C "$tmp/vtium" tag -a -m "$tag" "$tag"
+	printf '%s %s\n' "$tag" "$(git -C "$tmp/vtium" rev-parse "$tag^{commit}")"
+done >"$tmp/commits"
+export VTIUM_TAG_COMMITS=$tmp/commits
+# own_pkgver RECIPE TAG: what RECIPE's own pkgver() prints for a build of
+# the commit that TAG names.
+own_pkgver() {
+	rm -rf -- "$tmp/pv"
+	mkdir "$tmp/pv"
+	git clone -q "$tmp/vtium" "$tmp/pv/vtium"
+	git -C "$tmp/pv/vtium" checkout -q "$2^{commit}"
+	(
+		# shellcheck disable=SC1090,SC1091 # the recipe under test
+		source "$1/PKGBUILD"
+		cd "$tmp/pv" && pkgver
+	)
+}
 
 # api FILE RELEASE...: a stand-in API answer in FILE, one release for each
 # RELEASE, written as TAG or TAG:pre or TAG:draft.
@@ -114,7 +141,9 @@ tag=$new
 pkgver=$new_pkgver
 prerelease=true
 url=https://github.com/vtium/vtium/releases/tag/$new
-recipes=${release_recipes[*]}"
+recipes=${release_recipes[*]}
+git_pkgver=$new_pkgver.r0.g$(awk -v t="$new" '$1 == t { print substr($2, 1, 7) }' "$tmp/commits")
+git_recipes=${git_recipes[*]}"
 [ "$out" = "$want" ] && ok "a newer pre-release prints the move" || fail "a newer pre-release prints the move" "got: $out"
 for r in "${release_recipes[@]}"; do
 	got="$(sed -n 's/^_tag=//p' "$r/PKGBUILD") $(sed -n 's/^pkgver=//p' "$r/PKGBUILD") $(sed -n 's/^pkgrel=//p' "$r/PKGBUILD")"
@@ -125,11 +154,33 @@ for r in "${release_recipes[@]}"; do
 		ok "$r/.SRCINFO builds from the signed tag $new" || fail "$r/.SRCINFO builds from the signed tag $new" "no such source line"
 	grep -q "^pkgrel=" "$r/PKGBUILD" || fail "$r keeps its pkgrel line" "it has none"
 done
+# The -git recipes move with them, each to the pkgver its own pkgver()
+# prints for the new tag's commit, so that a build from main sorts after it.
+for r in "${git_recipes[@]}"; do
+	want_pkgver=$(own_pkgver "$r" "$new")
+	got="$(sed -n 's/^pkgver=//p' "$r/PKGBUILD") $(sed -n 's/^pkgrel=//p' "$r/PKGBUILD")"
+	[ "$got" = "$want_pkgver 1" ] && ok "$r reads $want_pkgver-1, what its pkgver() prints for $new" ||
+		fail "$r reads $want_pkgver-1, what its pkgver() prints for $new" "it reads pkgver, pkgrel: $got"
+	srcinfo=$(cd "$r" && makepkg --printsrcinfo)
+	[ "$srcinfo" = "$(cat "$r/.SRCINFO")" ] && ok "$r/.SRCINFO is what makepkg --printsrcinfo prints" || fail "$r/.SRCINFO" "it is not what makepkg --printsrcinfo prints"
+	grep -qxE "	provides = vtium(-terminfo)?=$want_pkgver" "$r/.SRCINFO" &&
+		ok "$r/.SRCINFO provides its package at $want_pkgver" || fail "$r/.SRCINFO provides its package at $want_pkgver" "$(grep provides "$r/.SRCINFO")"
+	grep -q '^_tag=' "$r/PKGBUILD" && fail "$r stays a -git recipe" "it has a _tag line"
+	grep -qxF "	source = vtium::git+https://github.com/vtium/vtium.git#branch=main" "$r/.SRCINFO" &&
+		ok "$r still builds from main" || fail "$r still builds from main" "no such source line"
+	[ "$(vercmp "$(own_pkgver "$r" "$new" | sed 's/\.r0\./.r1./')" "$want_pkgver")" -gt 0 ] &&
+		ok "$r: a build of a later commit on main sorts after $want_pkgver" || fail "$r: a later build sorts after $want_pkgver" "vercmp says otherwise"
+done
 grep '^| `vtium/` |' README.md | grep -qF "the tag \`$new\`" &&
 	ok "the README's table names $new" || fail "the README's table names $new" "$(grep -F '| `vtium/` |' README.md)"
 changed=$(git status --porcelain | awk '{ print $2 }' | sort | tr '\n' ' ')
-want_changed=$(for r in "${release_recipes[@]}"; do printf '%s/.SRCINFO\n%s/PKGBUILD\n' "$r" "$r"; done | { cat; echo README.md; } | sort | tr '\n' ' ')
-[ "$changed" = "$want_changed" ] && ok "the bump changes the five recipes and the README alone" || fail "the bump changes the five recipes and the README alone" "it changed: $changed"
+want_changed=$(for r in "${release_recipes[@]}" "${git_recipes[@]}"; do printf '%s/.SRCINFO\n%s/PKGBUILD\n' "$r" "$r"; done | { cat; echo README.md; } | sort | tr '\n' ' ')
+[ "$changed" = "$want_changed" ] && ok "the bump changes the nine recipes and the README alone" || fail "the bump changes the nine recipes and the README alone" "it changed: $changed"
+for r in "${git_recipes[@]}"; do
+	lines=$(git diff --numstat -- "$r/PKGBUILD" | awk '{ print $1 " " $2 }')
+	[ "$lines" = "1 1" ] || [ "$lines" = "2 2" ] && ok "the bump changes only the pkgver and pkgrel of $r/PKGBUILD" ||
+		fail "the bump changes only the pkgver and pkgrel of $r/PKGBUILD" "git diff --numstat reads $lines"
+done
 diffstat=$(git diff --numstat -- README.md | awk '{ print $1 " " $2 }')
 [ "$diffstat" = "1 1" ] && ok "the bump changes one line of the README" || fail "the bump changes one line of the README" "git diff --numstat reads $diffstat"
 
@@ -208,6 +259,79 @@ sed -i '/^| `vtium\/` |/d' README.md
 git commit -q -am "no row for vtium/"
 err=$(VTIUM_RELEASES_JSON=$tmp/newer.json ./bump-release 2>&1) && fail "a README without the row for vtium/ is refused" "it passed" ||
 	{ grep -qF "README.md has no row for vtium/" <<<"$err" && ok "a README without the row for vtium/ is refused" || fail "a README without the row for vtium/ is refused" "got: $err"; }
+
+# A bump fails and changes nothing when GitHub's API cannot say which
+# commit the new tag names, since the -git recipes' pkgver needs it.
+grep -v "^$new " "$tmp/commits" >"$tmp/no-commit"
+if err=$(git reset -q --hard "$base" && VTIUM_TAG_COMMITS=$tmp/no-commit VTIUM_RELEASES_JSON=$tmp/newer.json ./bump-release 2>&1); then
+	fail "a tag whose commit is unknown fails the bump" "it passed and printed: $err"
+elif ! grep -qF "cannot say which commit the tag $new names" <<<"$err"; then
+	fail "a tag whose commit is unknown fails the bump" "got: $err"
+elif [ -n "$(git status --porcelain)" ]; then
+	fail "a tag whose commit is unknown fails the bump" "it changed: $(git status --porcelain | tr '\n' ' ')"
+else
+	ok "a tag whose commit is unknown fails the bump and changes nothing"
+fi
+printf '%s <html>\n' "$new" >"$tmp/bad-commit"
+if err=$(git reset -q --hard "$base" && VTIUM_TAG_COMMITS=$tmp/bad-commit VTIUM_RELEASES_JSON=$tmp/newer.json ./bump-release 2>&1); then
+	fail "an answer that is not a commit hash fails the bump" "it passed and printed: $err"
+elif [ -n "$(git status --porcelain)" ]; then
+	fail "an answer that is not a commit hash fails the bump" "it changed: $(git status --porcelain | tr '\n' ' ')"
+else
+	ok "an answer that is not a commit hash fails the bump and changes nothing"
+fi
+
+# bump-release git-recipes moves the -git recipes to the tag the release
+# recipes build now, and leaves the release recipes and the README alone.
+git reset -q --hard "$base"
+git clean -qfdx
+out=$(./bump-release git-recipes)
+start_git=$(own_pkgver vtium-git "$start")
+want="git_pkgver=$start_git
+git_recipes=${git_recipes[*]}"
+[ "$out" = "$want" ] && ok "git-recipes prints the move to $start_git" || fail "git-recipes prints the move to $start_git" "got: $out"
+for r in "${git_recipes[@]}"; do
+	got="$(sed -n 's/^pkgver=//p' "$r/PKGBUILD") $(sed -n 's/^pkgrel=//p' "$r/PKGBUILD")"
+	[ "$got" = "$(own_pkgver "$r" "$start") 1" ] && ok "git-recipes moves $r to what its pkgver() prints for $start" ||
+		fail "git-recipes moves $r to what its pkgver() prints for $start" "it reads pkgver, pkgrel: $got"
+	[ "$(cd "$r" && makepkg --printsrcinfo)" = "$(cat "$r/.SRCINFO")" ] && ok "git-recipes makes $r/.SRCINFO again" || fail "git-recipes makes $r/.SRCINFO again" "it is not what makepkg --printsrcinfo prints"
+done
+changed=$(git status --porcelain | awk '{ print $2 }' | sort | tr '\n' ' ')
+want_changed=$(for r in "${git_recipes[@]}"; do printf '%s/.SRCINFO\n%s/PKGBUILD\n' "$r" "$r"; done | sort | tr '\n' ' ')
+[ "$changed" = "$want_changed" ] && ok "git-recipes changes the -git recipes alone" || fail "git-recipes changes the -git recipes alone" "it changed: $changed"
+git add -A
+git commit -q -m "the -git recipes at $start"
+out=$(./bump-release git-recipes)
+[ -z "$out" ] && [ -z "$(git status --porcelain)" ] && ok "a second git-recipes run changes nothing" || fail "a second git-recipes run changes nothing" "it printed '$out'"
+
+# A -git recipe whose pkgver is already newer than the tag's, such as one a
+# maintainer's makepkg wrote after a build from main, keeps it.
+ahead=$start_pkgver.r12.gabcdef0
+git reset -q --hard "$base"
+sed -i "s/^pkgver=.*/pkgver=$ahead/" vtium-git/PKGBUILD
+(cd vtium-git && makepkg --printsrcinfo >.SRCINFO)
+git commit -q -am "vtium-git ahead of $start"
+out=$(./bump-release git-recipes)
+[ "$(sed -n 's/^pkgver=//p' vtium-git/PKGBUILD)" = "$ahead" ] && ok "git-recipes keeps a pkgver that is already newer" ||
+	fail "git-recipes keeps a pkgver that is already newer" "vtium-git reads $(sed -n 's/^pkgver=//p' vtium-git/PKGBUILD)"
+grep -qx "git_recipes=vtium-minspec-git vtium-minspec-gpu-git vtium-terminfo-git" <<<"$out" &&
+	ok "git-recipes names only the recipes it moved" || fail "git-recipes names only the recipes it moved" "got: $out"
+
+# git-recipes refuses, as a bump does, when the release recipes build
+# different tags, since it would not know which tag to follow.
+git reset -q --hard "$base"
+sed -i "s/^_tag=.*/_tag=v0.1.0-alpha.4/" vtium-terminfo/PKGBUILD
+err=$(./bump-release git-recipes 2>&1) && fail "git-recipes refuses recipes that build different tags" "it passed" ||
+	{ grep -qF "the release recipes must build the same tag" <<<"$err" && ok "git-recipes refuses recipes that build different tags" || fail "git-recipes refuses recipes that build different tags" "got: $err"; }
+git checkout -q vtium-terminfo/PKGBUILD
+
+# A -git recipe that has no pkgver line, or no pkgver() function, is
+# refused before anything changes.
+sed -i '/^pkgver()/,/^}/d' vtium-terminfo-git/PKGBUILD
+err=$(./bump-release git-recipes 2>&1) && fail "a -git recipe with no pkgver() is refused" "it passed" ||
+	{ grep -qF "vtium-terminfo-git/PKGBUILD has no pkgver() function" <<<"$err" && [ "$(git status --porcelain)" = " M vtium-terminfo-git/PKGBUILD" ] &&
+		ok "a -git recipe with no pkgver() is refused and nothing changes" || fail "a -git recipe with no pkgver() is refused" "got: $err; $(git status --porcelain | tr '\n' ' ')"; }
+git checkout -q vtium-terminfo-git/PKGBUILD
 
 if [ "$fails" = 0 ]; then
 	echo "test-bump-release: every case passed"

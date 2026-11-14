@@ -2,9 +2,11 @@
 # Moves the release recipes to vtium's newest release, when vtium has
 # published one that is newer than the tag they build.
 #
-#   ./bump-release            find the newest release and bump the recipes
-#   ./bump-release pkgver TAG print the pkgver for TAG, such as 0.1.0alpha.6
-#                             for v0.1.0-alpha.6
+#   ./bump-release             find the newest release and bump the recipes
+#   ./bump-release git-recipes move the -git recipes to the tag the release
+#                              recipes build now
+#   ./bump-release pkgver TAG  print the pkgver for TAG, such as 0.1.0alpha.6
+#                              for v0.1.0-alpha.6
 #
 # A release recipe is a directory of this repository whose PKGBUILD sets
 # _tag, the tag of vtium/vtium it builds: vtium, vtium-minspec,
@@ -12,7 +14,22 @@
 # because every console package built from a release depends on
 # vtium-terminfo from the same release, and vtium-fonts ships the frits of
 # the same release. bump-release refuses to run when their _tag values
-# differ. The -git recipes follow vtium's main branch and have no _tag.
+# differ.
+#
+# A -git recipe is a directory whose name ends in -git and whose PKGBUILD
+# sets no _tag: vtium-git, vtium-minspec-git, vtium-minspec-gpu-git and
+# vtium-terminfo-git. Each one builds the tip of vtium's main branch, and
+# its pkgver() function works out the version at build time. The AUR shows
+# the static pkgver in its PKGBUILD and .SRCINFO, and AUR helpers compare
+# that pkgver with the installed one. So bump-release moves that static
+# pkgver whenever it moves the release recipes, to the version pkgver()
+# prints for a build of the release tag's commit: 0.1.0alpha.6.r0.g1a2b3c4
+# for v0.1.0-alpha.6 at the commit 1a2b3c4. A build from any later commit on
+# main then sorts after it. bump-release asks GitHub's API which commit the
+# tag names. It leaves alone a -git recipe whose pkgver already sorts at or
+# after the new one, such as a pkgver that makepkg wrote after a build from
+# main. bump-release git-recipes moves the -git recipes the same way to the
+# tag the release recipes build now, and changes nothing else.
 #
 # bump-release asks GitHub's API for vtium's releases, leaves out drafts,
 # and takes the release whose pkgver pacman's vercmp sorts highest. When
@@ -29,7 +46,11 @@
 #   prerelease=true               whether GitHub marks the release a pre-release
 #   url=https://github.com/...    the release's page
 #   recipes=vtium vtium-minspec   the recipes it rewrote
+#   git_pkgver=0.1.0alpha.6.r0.g1a2b3c4  the pkgver of the -git recipes
+#   git_recipes=vtium-git         the -git recipes it rewrote
 #
+# bump-release git-recipes prints the last two lines alone, or nothing when
+# every -git recipe already has that pkgver or a newer one.
 # The pkgver of a tag is the tag without its v and without the hyphen
 # before a pre-release, so that pacman sorts 0.1.0alpha.6 before 0.1.0.
 # bump-release takes only tags of the form vX.Y.Z or vX.Y.Z-pre, where pre
@@ -45,6 +66,9 @@
 #                        API answers fewer requests without one.
 #   VTIUM_RELEASES_JSON  a file that stands in for the API's answer, for
 #                        test-bump-release.
+#   VTIUM_TAG_COMMITS    a file that stands in for the API's answer to which
+#                        commit a tag names, for test-bump-release: one line
+#                        for each tag, the tag and the commit's full hash.
 set -euo pipefail
 
 # Whether a pre-release, such as v0.1.0-alpha.6, moves the release recipes.
@@ -65,12 +89,47 @@ pkgver_of() {
 	printf '%s%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[4]}"
 }
 
-if [ "${1-}" = pkgver ]; then
+usage="usage: bump-release, bump-release git-recipes, or bump-release pkgver TAG"
+mode=bump
+case ${1-} in
+pkgver)
 	[ $# = 2 ] || die "usage: bump-release pkgver TAG"
 	pkgver_of "$2" || die "the tag '$2' has neither the form vX.Y.Z nor vX.Y.Z-pre with a lowercase pre"
 	exit 0
-fi
-[ $# = 0 ] || die "usage: bump-release, or bump-release pkgver TAG"
+	;;
+git-recipes)
+	[ $# = 1 ] || die "$usage"
+	mode=git-recipes
+	;;
+'') [ $# = 0 ] || die "$usage" ;;
+*) die "$usage" ;;
+esac
+
+auth=()
+[ -z "${GH_TOKEN-}" ] || auth=(-H "Authorization: Bearer $GH_TOKEN")
+
+# commit_of TAG prints the full hash of the commit that TAG of vtium/vtium
+# names, or fails when GitHub's API cannot say. The API peels an annotated
+# tag, as vtium's release tags are, down to its commit.
+commit_of() {
+	local sha
+	if [ -n "${VTIUM_TAG_COMMITS-}" ]; then
+		sha=$(awk -v t="$1" '$1 == t { print $2 }' "$VTIUM_TAG_COMMITS")
+	else
+		sha=$(curl -fsSL "${auth[@]}" -H 'Accept: application/vnd.github.sha' \
+			"https://api.github.com/repos/$repo/commits/refs/tags/$1") || return 1
+	fi
+	[[ $sha =~ ^[0-9a-f]{40}$ ]] || return 1
+	printf '%s\n' "$sha"
+}
+
+# srcinfo DIR makes DIR's .SRCINFO again, with the build variables unset so
+# that it names GitHub's main and the default features.
+srcinfo() {
+	(cd "$1" && env -u VTIUM_GIT_URL -u VTIUM_GIT_BRANCH -u VTIUM_FEATURES makepkg --printsrcinfo >.SRCINFO.new) ||
+		die "makepkg --printsrcinfo failed in $1"
+	mv "$1/.SRCINFO.new" "$1/.SRCINFO"
+}
 
 top=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 cd "$top"
@@ -90,12 +149,56 @@ for r in "${recipes[@]}"; do
 done
 current_pkgver=$(pkgver_of "$current")
 
+# The -git recipes. Each one needs a pkgver line for bump-release to
+# rewrite, and a pkgver() function, which is what makes the static pkgver
+# only the version the AUR shows.
+mapfile -t git_recipes < <(for f in *-git/PKGBUILD; do
+	[ -f "$f" ] && ! grep -q '^_tag=' "$f" && echo "${f%/PKGBUILD}"
+done | LC_ALL=C sort)
+for r in "${git_recipes[@]}"; do
+	grep -q '^pkgver=' "$r/PKGBUILD" || die "$r/PKGBUILD has no pkgver line for bump-release to rewrite"
+	grep -q '^pkgver() *{' "$r/PKGBUILD" || die "$r/PKGBUILD has no pkgver() function, so it is not a -git recipe that bump-release can move"
+done
+
+# git_plan TAG picks the -git recipes to move to TAG: it sets git_pkgver to
+# what pkgver() prints for a build of TAG's commit, and git_moved to each
+# -git recipe whose pkgver sorts before git_pkgver. pkgver() names the
+# commit by its first seven hex digits, as git describe --abbrev=7 does.
+# It changes no file, so a failure here leaves the tree as it was.
+git_plan() {
+	local sha r
+	sha=$(commit_of "$1") || die "GitHub's API cannot say which commit the tag $1 names, which the pkgver of the -git recipes needs"
+	git_pkgver="$(pkgver_of "$1").r0.g${sha:0:7}"
+	git_moved=()
+	for r in "${git_recipes[@]}"; do
+		[ "$(vercmp "$(sed -n 's/^pkgver=//p' "$r/PKGBUILD")" "$git_pkgver")" -lt 0 ] && git_moved+=("$r")
+	done
+	return 0
+}
+
+# git_move rewrites pkgver and pkgrel=1 in each recipe git_plan picked, and
+# makes its .SRCINFO again.
+git_move() {
+	local r
+	for r in "${git_moved[@]}"; do
+		sed -i -e "s/^pkgver=.*/pkgver=$git_pkgver/" -e 's/^pkgrel=.*/pkgrel=1/' "$r/PKGBUILD"
+		srcinfo "$r"
+	done
+}
+
+if [ "$mode" = git-recipes ]; then
+	git_plan "$current"
+	[ ${#git_moved[@]} -gt 0 ] || exit 0
+	git_move
+	printf 'git_pkgver=%s\n' "$git_pkgver"
+	printf 'git_recipes=%s\n' "${git_moved[*]}"
+	exit 0
+fi
+
 # vtium's releases, as GitHub's API lists them.
 if [ -n "${VTIUM_RELEASES_JSON-}" ]; then
 	releases=$(cat -- "$VTIUM_RELEASES_JSON")
 else
-	auth=()
-	[ -z "${GH_TOKEN-}" ] || auth=(-H "Authorization: Bearer $GH_TOKEN")
 	releases=$(curl -fsSL "${auth[@]}" -H 'Accept: application/vnd.github+json' \
 		"https://api.github.com/repos/$repo/releases?per_page=100") ||
 		die "GitHub's API did not list the releases of $repo"
@@ -136,14 +239,14 @@ done <<<"$listed"
 row='^| `vtium/` |.*the tag `[^`]*`'
 grep -q "$row" README.md ||
 	die "README.md has no row for vtium/ that names 'the tag \`...\`', so bump-release cannot rewrite the tag there"
+git_plan "$best"
 
 for r in "${recipes[@]}"; do
 	sed -i -e "s/^_tag=.*/_tag=$best/" -e "s/^pkgver=.*/pkgver=$best_pkgver/" \
 		-e 's/^pkgrel=.*/pkgrel=1/' "$r/PKGBUILD"
-	(cd "$r" && env -u VTIUM_GIT_URL -u VTIUM_GIT_BRANCH -u VTIUM_FEATURES makepkg --printsrcinfo >.SRCINFO.new) ||
-		die "makepkg --printsrcinfo failed in $r"
-	mv "$r/.SRCINFO.new" "$r/.SRCINFO"
+	srcinfo "$r"
 done
+git_move
 
 sed -i "/^| \`vtium\/\` |/s/the tag \`[^\`]*\`/the tag \`$best\`/" README.md
 
@@ -153,3 +256,5 @@ printf 'pkgver=%s\n' "$best_pkgver"
 printf 'prerelease=%s\n' "$best_pre"
 printf 'url=%s\n' "$best_url"
 printf 'recipes=%s\n' "${recipes[*]}"
+printf 'git_pkgver=%s\n' "$git_pkgver"
+printf 'git_recipes=%s\n' "${git_moved[*]}"
