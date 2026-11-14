@@ -8,9 +8,10 @@
 #
 # A release recipe is a directory of this repository whose PKGBUILD sets
 # _tag, the tag of vtium/vtium it builds: vtium, vtium-minspec,
-# vtium-minspec-gpu and vtium-terminfo. They move together, because every
-# console package built from a release depends on vtium-terminfo from the
-# same release, and bump-release refuses to run when their _tag values
+# vtium-minspec-gpu, vtium-terminfo and vtium-fonts. They move together,
+# because every console package built from a release depends on
+# vtium-terminfo from the same release, and vtium-fonts ships the frits of
+# the same release. bump-release refuses to run when their _tag values
 # differ. The -git recipes follow vtium's main branch and have no _tag.
 #
 # bump-release asks GitHub's API for vtium's releases, leaves out drafts,

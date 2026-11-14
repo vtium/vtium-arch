@@ -26,7 +26,7 @@ fail() {
 	fails=$((fails + 1))
 }
 
-release_recipes=(vtium vtium-minspec vtium-minspec-gpu vtium-terminfo)
+release_recipes=(vtium vtium-fonts vtium-minspec vtium-minspec-gpu vtium-terminfo)
 
 # The clone, with the working copy's bump-release committed in it, so a
 # change to the script is tested before it is committed.
@@ -103,7 +103,7 @@ unchanged "no release at all changes nothing" "$(run "$tmp/empty.json")"
 api "$tmp/draft.json" v9.0.0:draft "$start:pre"
 unchanged "a draft release changes nothing" "$(run "$tmp/draft.json")"
 
-# A newer pre-release moves all four release recipes and the README.
+# A newer pre-release moves all five release recipes and the README.
 # A version no real release reaches, so it stays newer than whatever the
 # recipes build after each real bump.
 new=v9.0.0-alpha.1 new_pkgver=9.0.0alpha.1
@@ -129,7 +129,7 @@ grep '^| `vtium/` |' README.md | grep -qF "the tag \`$new\`" &&
 	ok "the README's table names $new" || fail "the README's table names $new" "$(grep -F '| `vtium/` |' README.md)"
 changed=$(git status --porcelain | awk '{ print $2 }' | sort | tr '\n' ' ')
 want_changed=$(for r in "${release_recipes[@]}"; do printf '%s/.SRCINFO\n%s/PKGBUILD\n' "$r" "$r"; done | { cat; echo README.md; } | sort | tr '\n' ' ')
-[ "$changed" = "$want_changed" ] && ok "the bump changes the four recipes and the README alone" || fail "the bump changes the four recipes and the README alone" "it changed: $changed"
+[ "$changed" = "$want_changed" ] && ok "the bump changes the five recipes and the README alone" || fail "the bump changes the five recipes and the README alone" "it changed: $changed"
 diffstat=$(git diff --numstat -- README.md | awk '{ print $1 " " $2 }')
 [ "$diffstat" = "1 1" ] && ok "the bump changes one line of the README" || fail "the bump changes one line of the README" "git diff --numstat reads $diffstat"
 
