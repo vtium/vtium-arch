@@ -17,8 +17,8 @@
 # 0.1.0 (vercmp).
 
 pkgname=vtium-minspec
-_tag=v0.1.0-alpha.7
-pkgver=0.1.0alpha.7
+_tag=v0.1.0-alpha.8
+pkgver=0.1.0alpha.8
 pkgrel=1
 pkgdesc='Terminal for the Linux console, drawn through KMS/DRM: the smallest build, with no pictures and no GPU path'
 arch=('x86_64')
