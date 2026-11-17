@@ -18,7 +18,7 @@
 # commit that GitHub signs with its own key.
 
 pkgname=vtium-minspec-git
-pkgver=0.1.0alpha.8.r0.gfc6ccc6
+pkgver=0.1.0alpha.9.r0.g4aa2eed
 pkgrel=1
 pkgdesc='Terminal for the Linux console, drawn through KMS/DRM: the smallest build, with no pictures and no GPU path (git main)'
 arch=('x86_64')
