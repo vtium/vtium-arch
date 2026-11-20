@@ -18,6 +18,8 @@ This repository is the Arch Linux packaging of [vtium](https://github.com/vtium/
 
 The four minspec recipes are never published on the AUR, because they are build options of `vtium` rather than packages of their own. `ci/unpublished` names them, and the build still builds and checks them. In `vtium/`, `VTIUM_FEATURES= makepkg` builds the minspec console and `VTIUM_FEATURES=gpu makepkg` the minspec console with the GPU path, each with the `vtium` recipe's dependencies, frits and build settings.
 
+From 0.1.0-alpha.10 on, every console package installs vtium's own font files: Terminus, Unifont and Cullet Mono. Each console recipe downloads the font sources that vtium pins, and makepkg checks their SHA-256 before the build. The recipe then builds Cullet Mono from those sources with FontForge, so FontForge is a build dependency. vtium's tools find every font source in place, so they download nothing.
+
 The maintainer signs each release tag, and makepkg refuses to build a release recipe until the tag's signature checks out against the key in `validpgpkeys`. Each release recipe carries that key in `keys/pgp/`, so import it once with `gpg --import vtium/keys/pgp/*.asc`. A release recipe's `pkgver` is its tag without the `v` and without the hyphen before a pre-release, so `v0.1.0-alpha.6` is `0.1.0alpha.6`, which pacman sorts before `0.1.0`.
 
 ## What a console package does to your VTs
