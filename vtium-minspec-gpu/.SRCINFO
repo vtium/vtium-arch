@@ -1,6 +1,6 @@
 pkgbase = vtium-minspec-gpu
 	pkgdesc = Terminal for the Linux console, drawn through KMS/DRM: the smallest build with the GPU path, and no pictures
-	pkgver = 0.1.0alpha.9
+	pkgver = 0.1.0alpha.10
 	pkgrel = 1
 	url = https://github.com/vtium/vtium
 	install = vtium-minspec-gpu.install
@@ -22,7 +22,7 @@ pkgbase = vtium-minspec-gpu
 	optdepends = vtium-fonts: the fonts the shipped frits name
 	optdepends = kbd: console fonts, which vtium draws when no frit is set
 	optdepends = kmscon-terminfo: the terminfo entry kmscon, for sessions run with term=kmscon
-	provides = vtium=0.1.0alpha.9
+	provides = vtium=0.1.0alpha.10
 	conflicts = vtium
 	noextract = terminus-font-4.49.1.tar.gz
 	noextract = terminus-ttf-4.49.3.zip
@@ -31,7 +31,7 @@ pkgbase = vtium-minspec-gpu
 	backup = etc/vtium/fonts/desktop.vtfrit
 	backup = etc/vtium/fonts/minspec-16.vtfrit
 	backup = etc/vtium/fonts/minspec-8.vtfrit
-	source = vtium::git+https://github.com/vtium/vtium.git#tag=v0.1.0-alpha.9?signed
+	source = vtium::git+https://github.com/vtium/vtium.git#tag=v0.1.0-alpha.10?signed
 	source = https://downloads.sourceforge.net/project/terminus-font/terminus-font-4.49/terminus-font-4.49.1.tar.gz
 	source = https://files.ax86.net/terminus-ttf/files/4.49.3/terminus-ttf-4.49.3.zip
 	source = https://github.com/ryanoasis/nerd-fonts/releases/download/v3.4.0/FontPatcher.zip
