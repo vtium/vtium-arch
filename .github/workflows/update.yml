@@ -157,7 +157,9 @@ jobs:
       # The pull request this run opened, or the open one it left alone.
       #
       # A recipe opts out of the merge with ci/<recipe>/.no-auto-merge on the
-      # pull request's branch. The watcher then turns off an auto-merge that
+      # pull request's branch. The step fetches that branch by name, because
+      # GitHub makes a new pull request's refs/pull/<n>/head a moment after
+      # create-pull-request returns, while the branch is already pushed. The watcher then turns off an auto-merge that
       # is already on, and the pull request waits for the maintainer.
       # Otherwise the watcher refuses to queue the merge unless main requires
       # the check gate, since GitHub would merge the pull request before its
@@ -172,7 +174,7 @@ jobs:
           PR: ${{ steps.pr.outputs.pull-request-number || steps.open.outputs.number }}
         run: |
           R=$GITHUB_REPOSITORY
-          git fetch -q origin "refs/pull/$PR/head"
+          git fetch -q origin "refs/heads/$(gh pr view "$PR" -R "$R" --json headRefName --jq .headRefName)"
           held=$(git ls-tree -r --name-only FETCH_HEAD -- ci | grep '/\.no-auto-merge$' | tr '\n' ' ' || true)
           auto=$(gh pr view "$PR" -R "$R" --json autoMergeRequest --jq '.autoMergeRequest != null')
           if [ -n "$held" ]; then
