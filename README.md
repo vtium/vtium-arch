@@ -7,7 +7,7 @@ This repository is the Arch Linux packaging of [vtium](https://github.com/vtium/
 | Directory | What it builds | What it builds from |
 |---|---|---|
 | `vtium/` | the console for a desktop or laptop, with the features `images logind gpu bidi libseat` and the GPU path on by default | a release: the tag `v0.1.0-alpha.9`, checked against the maintainer's signature |
-| `vtium-git/` | the same console | the tip of vtium's `main` |
+| `vtium-git/` | the same console with the feature `filters` too, which draws a look's effects; vtium has it from 0.1.0-alpha.10 on | the tip of vtium's `main` |
 | `vtium-minspec/` | vtium's smallest console, with no feature | the same release tag |
 | `vtium-minspec-git/` | the same console | the tip of `main` |
 | `vtium-minspec-gpu/` | the smallest console with the feature `gpu`, and the GPU path off by default | the same release tag |
@@ -17,6 +17,8 @@ This repository is the Arch Linux packaging of [vtium](https://github.com/vtium/
 | `vtium-fonts/` | a curated set of fonts chosen to go with vtium's frits (font set files), which grows as new frits are added; it installs vtium's nine frits for scripts in `/etc/vtium/fonts`, installs no font itself, and depends on the distribution's font packages | the same release tag |
 
 The four minspec recipes are never published on the AUR, because they are build options of `vtium` rather than packages of their own. `ci/unpublished` names them, and the build still builds and checks them. In `vtium/`, `VTIUM_FEATURES= makepkg` builds the minspec console and `VTIUM_FEATURES=gpu makepkg` the minspec console with the GPU path, each with the `vtium` recipe's dependencies, frits and build settings.
+
+From 0.1.0-alpha.10 on, every console package installs vtium's own font files: Terminus, Unifont and Cullet Mono. Each console recipe downloads the font sources that vtium pins, and makepkg checks their SHA-256 before the build. The recipe then builds Cullet Mono from those sources with FontForge, so FontForge is a build dependency. vtium's tools find every font source in place, so they download nothing.
 
 The maintainer signs each release tag, and makepkg refuses to build a release recipe until the tag's signature checks out against the key in `validpgpkeys`. Each release recipe carries that key in `keys/pgp/`, so import it once with `gpg --import vtium/keys/pgp/*.asc`. A release recipe's `pkgver` is its tag without the `v` and without the hyphen before a pre-release, so `v0.1.0-alpha.6` is `0.1.0alpha.6`, which pacman sorts before `0.1.0`.
 
