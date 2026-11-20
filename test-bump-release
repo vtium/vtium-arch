@@ -46,7 +46,9 @@ start_pkgver=$(./bump-release pkgver "$start")
 # names, and lists the same commits, so a case can run a -git recipe's own
 # pkgver() in this repository and compare its answer with bump-release's.
 git init -q "$tmp/vtium"
-for tag in "$start" v9.0.0-alpha.1 v0.1.0 v0.1.0-alpha.10; do
+# The recipe's own tag can be one of the fixed tags, as it is once the
+# recipes build v0.1.0-alpha.10, so each tag is made once.
+for tag in $(printf '%s\n' "$start" v9.0.0-alpha.1 v9.0.0-alpha.9 v9.0.0-alpha.10 v0.1.0 v0.1.0-alpha.10 | awk '!seen[$0]++'); do
 	git -C "$tmp/vtium" commit -q --allow-empty -m "the commit of $tag"
 	git -C "$tmp/vtium" tag -a -m "$tag" "$tag"
 	printf '%s %s\n' "$tag" "$(git -C "$tmp/vtium" rev-parse "$tag^{commit}")"
@@ -191,14 +193,15 @@ out=$(VTIUM_RELEASES_JSON=$tmp/newer.json ./bump-release)
 [ -z "$out" ] && [ -z "$(git status --porcelain)" ] && ok "a second run changes nothing" || fail "a second run changes nothing" "it printed '$out'"
 
 # The newest release wins by vercmp, not by its place in the list: 0.1.0
-# sorts after 0.1.0rc.1, and alpha.10 after alpha.9.
+# sorts after 0.1.0rc.1, and alpha.10 after alpha.9. The alpha pair sorts
+# after any tag the recipes build, so the case holds whatever _tag is.
 api "$tmp/final.json" v0.1.0-rc.1:pre v0.1.0 v0.1.0-alpha.9:pre
 out=$(run "$tmp/final.json")
 grep -qx 'tag=v0.1.0' <<<"$out" && grep -qx 'prerelease=false' <<<"$out" && grep -qx '^pkgver=0.1.0$' <<<"$out" &&
 	ok "a release sorts after its own pre-releases" || fail "a release sorts after its own pre-releases" "got: $out"
-api "$tmp/ten.json" v0.1.0-alpha.9:pre v0.1.0-alpha.10:pre
+api "$tmp/ten.json" v9.0.0-alpha.9:pre v9.0.0-alpha.10:pre
 out=$(run "$tmp/ten.json")
-grep -qx 'tag=v0.1.0-alpha.10' <<<"$out" && ok "alpha.10 sorts after alpha.9" || fail "alpha.10 sorts after alpha.9" "got: $out"
+grep -qx 'tag=v9.0.0-alpha.10' <<<"$out" && ok "alpha.10 sorts after alpha.9" || fail "alpha.10 sorts after alpha.9" "got: $out"
 
 # A release whose tag has another form is passed over.
 api "$tmp/odd.json" release-2 "$start:pre"

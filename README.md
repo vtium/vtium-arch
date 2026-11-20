@@ -6,7 +6,7 @@ This repository is the Arch Linux packaging of [vtium](https://github.com/vtium/
 
 | Directory | What it builds | What it builds from |
 |---|---|---|
-| `vtium/` | the console for a desktop or laptop, with the features `images logind gpu bidi libseat` and the GPU path on by default | a release: the tag `v0.1.0-alpha.9`, checked against the maintainer's signature |
+| `vtium/` | the console for a desktop or laptop, with the features `images logind gpu bidi libseat` and the GPU path on by default | a release: the tag `v0.1.0-alpha.10`, checked against the maintainer's signature |
 | `vtium-git/` | the same console with the feature `filters` too, which draws a look's effects; vtium has it from 0.1.0-alpha.10 on | the tip of vtium's `main` |
 | `vtium-minspec/` | vtium's smallest console, with no feature | the same release tag |
 | `vtium-minspec-git/` | the same console | the tip of `main` |
@@ -14,7 +14,7 @@ This repository is the Arch Linux packaging of [vtium](https://github.com/vtium/
 | `vtium-minspec-gpu-git/` | the same console | the tip of `main` |
 | `vtium-terminfo/` | vtium's terminfo entry `xterm-vtium`, which each console built from a release depends on | the same release tag |
 | `vtium-terminfo-git/` | the same entry, for the `-git` consoles | the tip of `main` |
-| `vtium-fonts/` | a curated set of fonts chosen to go with vtium's frits (font set files), which grows as new frits are added; it installs vtium's nine frits for scripts in `/etc/vtium/fonts`, installs no font itself, and depends on the distribution's font packages | the same release tag |
+| `vtium-fonts/` | a curated set of fonts chosen to go with vtium's frits (font set files), which grows as new frits are added; it installs the frits and layers of vtium's catalog that no console package installs, under `/etc/vtium/fonts/<category>/` and `/etc/vtium/fonts/layers/`, installs no font itself, and depends on the distribution's font packages | the same release tag |
 
 The four minspec recipes are never published on the AUR, because they are build options of `vtium` rather than packages of their own. `ci/unpublished` names them, and the build still builds and checks them. In `vtium/`, `VTIUM_FEATURES= makepkg` builds the minspec console and `VTIUM_FEATURES=gpu makepkg` the minspec console with the GPU path, each with the `vtium` recipe's dependencies, frits and build settings.
 
