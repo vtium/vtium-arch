@@ -20,8 +20,8 @@ pkgbase = vtium-minspec
 	depends = libxkbcommon
 	depends = systemd-libs
 	depends = vtium-terminfo
-	optdepends = vtium-fonts: the fonts the shipped frits name
-	optdepends = kbd: console fonts, which vtium draws when no frit is set
+	optdepends = vtium-fonts: the rest of vtium's catalog of font sets, and the fonts they draw with
+	optdepends = kbd: console fonts, which vconsole.conf's FONT= and vtium.conf's font-name can name
 	optdepends = kmscon-terminfo: the terminfo entry kmscon, for sessions run with term=kmscon
 	provides = vtium=0.1.0alpha.10
 	conflicts = vtium

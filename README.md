@@ -14,7 +14,7 @@ This repository is the Arch Linux packaging of [vtium](https://github.com/vtium/
 | `vtium-minspec-gpu-git/` | the same console | the tip of `main` |
 | `vtium-terminfo/` | vtium's terminfo entry `xterm-vtium`, which each console built from a release depends on | the same release tag |
 | `vtium-terminfo-git/` | the same entry, for the `-git` consoles | the tip of `main` |
-| `vtium-fonts/` | a curated set of fonts chosen to go with vtium's frits (font set files), which grows as new frits are added; it installs the frits and layers of vtium's catalog that no console package installs, under `/etc/vtium/fonts/<category>/` and `/etc/vtium/fonts/layers/`, installs no font itself, and depends on the distribution's font packages | the same release tag |
+| `vtium-fonts/` | the frits (font set files) and layers of vtium's catalog that no console package installs, under `/etc/vtium/fonts/<category>/` and `/etc/vtium/fonts/layers/`, and the fonts they name: it depends on Arch's font packages, lists Noto Sans CJK and the Nerd Fonts builds as optional dependencies, and carries pinned copies of Px437 IBM VGA 9x16, Glass TTY VT220, Tiny5 Mono and Unscii-8, which Arch does not package, in `/usr/share/fonts/vtium/`, with their license texts and a notices file. It converts Unscii-8 to BDF with upstream's own script | the same release tag |
 
 The four minspec recipes are never published on the AUR, because they are build options of `vtium` rather than packages of their own. `ci/unpublished` names them, and the build still builds and checks them. In `vtium/`, `VTIUM_FEATURES= makepkg` builds the minspec console and `VTIUM_FEATURES=gpu makepkg` the minspec console with the GPU path, each with the `vtium` recipe's dependencies, frits and build settings.
 

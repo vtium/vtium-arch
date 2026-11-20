@@ -38,8 +38,8 @@ depends=('glibc' 'libgcc' 'libxkbcommon' 'systemd-libs' 'vtium-terminfo-git')
 makedepends=('cargo' 'git' 'fontforge')
 optdepends=('libglvnd: libEGL.so.1, which the GPU path loads when hwaccel is on'
             'mesa: libgbm.so.1, which the GPU path loads, and the EGL driver for most cards'
-            'vtium-fonts: the fonts the shipped frits name'
-            'kbd: console fonts, which vtium draws when no frit is set'
+            "vtium-fonts: the rest of vtium's catalog of font sets, and the fonts they draw with"
+            "kbd: console fonts, which vconsole.conf's FONT= and vtium.conf's font-name can name"
             'kmscon-terminfo: the terminfo entry kmscon, for sessions run with term=kmscon')
 provides=("vtium=$pkgver")
 conflicts=('vtium')
