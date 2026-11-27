@@ -1,6 +1,6 @@
 pkgbase = vtium-minspec-gpu
 	pkgdesc = Terminal for the Linux console, drawn through KMS/DRM: the smallest build with the GPU path, and no pictures
-	pkgver = 0.1.0alpha.11
+	pkgver = 0.1.0alpha.12
 	pkgrel = 1
 	url = https://github.com/vtium/vtium
 	install = vtium-minspec-gpu.install
@@ -25,7 +25,7 @@ pkgbase = vtium-minspec-gpu
 	optdepends = vtium-fonts: the rest of vtium's catalog of font sets, and the fonts they draw with
 	optdepends = kbd: console fonts, which vconsole.conf's FONT= and vtium.conf's font-name can name
 	optdepends = kmscon-terminfo: the terminfo entry kmscon, for sessions run with term=kmscon
-	provides = vtium=0.1.0alpha.11
+	provides = vtium=0.1.0alpha.12
 	conflicts = vtium
 	noextract = terminus-font-4.49.1.tar.gz
 	noextract = terminus-ttf-4.49.3.zip
@@ -41,7 +41,7 @@ pkgbase = vtium-minspec-gpu
 	backup = etc/vtium/fonts/layers/noto-emoji.vtlayer
 	backup = etc/vtium/fonts/layers/noto-emoji-small.vtlayer
 	backup = etc/vtium/fonts/layers/unifont.vtlayer
-	source = vtium::git+https://github.com/vtium/vtium.git#tag=v0.1.0-alpha.11?signed
+	source = vtium::git+https://github.com/vtium/vtium.git#tag=v0.1.0-alpha.12?signed
 	source = https://downloads.sourceforge.net/project/terminus-font/terminus-font-4.49/terminus-font-4.49.1.tar.gz
 	source = https://files.ax86.net/terminus-ttf/files/4.49.3/terminus-ttf-4.49.3.zip
 	source = https://github.com/ryanoasis/nerd-fonts/releases/download/v3.4.0/FontPatcher.zip
